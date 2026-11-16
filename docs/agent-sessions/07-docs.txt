@@ -1,0 +1,711 @@
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~/Work/langgraph-sql-agent-genpact
+
+  Fable 5.2 is here for your longest and toughest coding tasks, and is included in your plan until November 16. It draws down usage faster than Opus 5.5. Switch with /model.
+  1 more notice hidden
+
+❯ /clear                                                                        
+
+❯ /model opus                                                                   
+  ⎿  Set model to Opus 5.5 and saved as your default for new sessions
+
+❯ read CLAUDE.md. milestones 1 to 6 are done (graph, validation, tracing,       
+  planner, tests, eval).                                                        
+                                                                                
+  milestone 7: documentation and final deliverables. propose a plan, no code    
+  changes to src/agent.                                                         
+                                                                                
+  scope:                                                                        
+  README.md in the root, the first thing reviewers read:                        
+  what the project does in a few lines                                          
+  the graph as a diagram (mermaid, from the real graph)                         
+  how to run it from zero: clone, venv, pip install, .env from .env.example,    
+  build the db, ask a question, run the tests, run the eval, show a trace       
+  the main design decisions with the reason for each (fixed workflow vs react   
+  agent, read-only db as the security boundary, planner and multi-step,         
+  ask_user as its own node, results only holds accepted results, compare        
+  results not sql)                                                              
+  links to the other docs, the eval report and the example traces               
+  AI usage: built with Claude Code, session history in docs/agent-sessions/,    
+  architecture discussed with Claude chat                                       
+                                                                                
+  docs/production.md: reliability, scalability, monitoring, security,           
+  deployment. keep it honest and short, what we have now and what we would add  
+  (read-only db user, statement timeout, sql parser, schema retrieval for big   
+  databases, caching, rate limits, cost tracking, alerts on give_up rate)       
+                                                                                
+  docs/examples.md: 6 to 8 real example questions with the real sql, result and 
+  answer from real runs, including a multi-step one, a rejected one, a          
+  clarification and an empty result. no invented outputs                        
+                                                                                
+  docs/known-limitations.md: the ambiguous multi-step question, lenient eval    
+  comparison, sqlite only for read-only, LIMIT not universal, anything else we  
+  found                                                                         
+                                                                                
+  update docs/agent-sessions/README.md: fill the key decisions for every        
+  session and the "where to look first" line                                    
+                                                                                
+  check that every command in the README really works                           
+                                                                                
+  also tell me which files a reviewer should read first, in order               
+
+  Read 1 file, listed 2 directories, ran 2 shell commands (ctrl+o to expand)
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ I've finished the milestone 7 plan, covering 5 docs and a clean-copy check of
+  every README command, and I'm submitting it for your approval. · summary
+
+⏺ User approved Claude's plan
+  ⎿  Plan saved to: 
+     ~/.claude/plans/pasted-content-id-e1b5-read-claude-md-dynamic-hopcroft.md ·
+     /plan to edit
+     Milestone 7: documentation and final deliverables
+
+     Context
+
+     Milestones 1-6 are done, but there is no root README. Reviewers need one
+     entry point
+     that explains what the system does, how to run it from zero, and why it is
+     built the way
+     it is. They also need honest production notes, real examples and known
+     limitations.
+     No changes to src/agent. Docs only, plus new real traces in
+     traces/examples/.
+
+     Existing material to reuse, not rewrite: docs/planner-and-multistep.md
+     (graph, planner,
+     interrupt, null-steps bug), docs/sql-validation-and-security.md,
+     docs/tracing.md,
+     docs/eval-report.md (9/10), traces/examples/README.md,
+     config/university_notes.md.
+
+     Files
+
+     1. README.md (new, root)
+
+     - What it does: 4-5 lines. NL question -> plan -> SQL -> read-only DB ->
+       answer from the results only.
+     - Graph: mermaid made from the real compiled graph, not drawn by hand:
+       build_graph(<dummy llm>, connect_readonly(...), 
+       notes).get_graph().draw_mermaid()
+       run once as a one-off command (no new code file), output pasted into the
+       README
+       (only the %%{init}%% header removed). Plus a 3-line legend: the error
+       loop (max 3 attempts per
+       step), the one empty-result retry, ask_user/interrupt.
+     - Quickstart (each command checked, see Verification):
+     git clone https://github.com/adonis121/langgraph-sql-agent-genpact.git && 
+     cd langgraph-sql-agent-genpact
+     python3.11 -m venv venv && source venv/bin/activate
+     pip install -r requirements.txt
+     cp .env.example .env          # set OPENAI_API_KEY (LangSmith optional)
+     python -m src.db.build_db
+     python -m src.main "How many students failed at least one course?"
+     python -m src.show_trace traces/<run_id>.jsonl      # path printed by main
+     python -m src.show_trace traces/examples/multi-step.jsonl   # no API key 
+     needed
+     pytest                         # fake LLM, no API calls
+     python -m src.eval             # real model, ~10 questions, rewrites 
+     docs/eval-report.md
+     - Design decisions, one reason each: fixed workflow vs ReAct; read-only
+       connection is the
+       security boundary, validate_sql is a correctness guardrail; planner + up
+       to 3 steps (later
+       steps see earlier results); ask_user as its own node (interrupt() re-runs
+       the node on
+       resume, so the planner LLM is not called twice); results holds only
+       accepted results
+       (only check_result appends via the reducer); eval compares results, not
+       SQL text.
+       Also briefly mention DB-agnostic (inspector + notes file) and plain-text
+       LLM interface (fake LLM in tests).
+     - Project layout: short folder table.
+     - Further docs: links to every file in docs/, eval report,
+       traces/examples/README.md.
+     - Reading order for reviewers (same list as at the end of this plan).
+     - AI usage: built with Claude Code, one session per milestone in plan mode,
+       sessions in
+       docs/agent-sessions/, architecture discussed with Claude chat, decisions
+       in CLAUDE.md.
+
+     2. docs/production.md (new, short)
+
+     For each of reliability, scalability, monitoring, security, deployment: two
+     short lists,
+     "Now" (what the code really has) and "Would add". Would-add items:
+     read-only DB user on a
+     replica, statement timeout / SQLite progress handler, a real SQL parser
+     (sqlglot) instead of
+     the keyword check, schema retrieval for big databases (only relevant tables
+     in the prompt),
+     caching (schema already read once; cache answers by question+data version),
+     rate limits,
+     per-run token/cost tracking (LangSmith), alerts on give_up / decline /
+     empty-answer rate,
+     persistent checkpointer (InMemorySaver loses paused runs on restart), PII
+     in traces.
+
+     3. docs/examples.md (new): 7 real runs, nothing invented
+
+     Every SQL, result table and answer is copied from a trace file in
+     traces/examples/; each
+     example links its trace. Planned set:
+     1. Simple aggregation (a new run, with the planner, because
+        simple-success.jsonl is from before milestone 5)
+     2. Join + filter, e.g. "Which courses did Daniel Kim teach in Spring 2026?"
+        (new run)
+     3. Multi-step: multi-step.jsonl (existing)
+     4. Duplicate names: duplicate-names.jsonl (existing)
+     5. Clarification: clarification-interrupt.jsonl (existing)
+     6. Rejected: out-of-scope-delete.jsonl (existing)
+     7. Empty result + retry: a new run with the planner ("Which students took
+        Quantum Basket Weaving?")
+
+     New runs: python -m src.main ... with the real model (3 calls of about 4
+     LLM requests each),
+     then copy the trace into traces/examples/<name>.jsonl and add a row to its
+     README.
+     Old pre-planner files stay, marked "(milestone 4, before the planner)". If
+     a new run behaves
+     differently than expected, I document what really happened or pick another
+     question; I do not edit a trace.
+
+     4. docs/known-limitations.md (new)
+
+     - The multi-step question can be read two ways ("failed ... taught by that
+       teacher": in Fall
+       2025 or in any semester). The eval tests both readings as separate
+       questions (#9, #10).
+     - The eval comparison is lenient: extra agent columns are allowed, only the
+       last step is checked,
+       rows are compared as sets, numbers are rounded. It is also strict: exact
+       values only (#6 fails on
+       shape). It is one run per question, so nondeterminism is not measured.
+     - The eval reference for "best teacher" uses LIMIT 1 (ties not covered;
+       fine on the seed data).
+     - The read-only guarantee only exists for SQLite: connect_readonly refuses
+       other engines.
+     - LIMIT is not universal (TOP); a LIMIT anywhere counts; 200-row cap; the
+       answer sees 50 rows.
+     - The keyword check is a denylist (the read-only DB is the real boundary).
+     - Behaviour that depends on prompt rules is not guaranteed (ask about
+       shared names, never widen on retry).
+     - At most one clarification; InMemorySaver (a pause doesn't survive a
+       restart).
+     - Later steps copy ids from earlier result tables through the prompt
+       (bounded by the rows shown).
+     - The full schema goes into every prompt (fine for 6 tables, not for 600).
+     - No statement timeout. No SQL-error retry / give_up example trace from a
+       real run yet.
+     - Any other gaps found while writing the docs.
+
+     5. docs/agent-sessions/README.md (update)
+
+     - Fix file names so links work: 03-validation-retries.txt, 05-planner.txt,
+       06-test-and-eval.txt. Remove the stray ” characters and line breaks
+       inside table cells.
+     - Fill "Key decisions" for 03-07. To do this, skim each session's plan and
+       summary sections. 07 = this session.
+     - "Where to look first": architecture -> 00, 02; problems found and fixed
+       -> 05 (null-steps
+       bug through a trace, Maria Garcia clarification, empty-reply loop) and 06
+       (eval 6/10 ->
+       reference fixes); validation and security -> 03.
+     - Note: you export this session yourself with /export 
+       docs/agent-sessions/07-docs.txt
+       and check it for keys.
+
+     6. Small doc touch-ups (only if needed for consistency)
+
+     - docs/planner-and-multistep.md: change "The milestone 6 eval set should
+       fix one reading" to point at eval #9/#10.
+     - traces/examples/README.md: add rows for the new traces.
+
+     Reading order for reviewers
+
+     1. README.md
+     2. src/agent/graph.py: the whole workflow and routing on one screen
+     3. src/agent/state.py
+     4. src/agent/nodes.py (+ planner.py)
+     5. src/agent/prompts.py
+     6. src/agent/sql_validation.py + src/db/database.py (connect_readonly)
+     7. docs/planner-and-multistep.md (includes the bug found through a trace)
+     8. docs/eval-report.md + src/eval/compare.py
+     9. python -m src.show_trace traces/examples/multi-step.jsonl
+     10. tests/test_graph_e2e.py, tests/fake_llm.py
+     11. docs/known-limitations.md, docs/production.md
+
+     Verification
+
+     - Clean-room check: copy the working tree (without venv, .env, db,
+       traces/*.jsonl) into the
+       scratchpad. (A git clone would miss the uncommitted milestone 5-6 work.)
+       Then run every README
+       command in order: venv, pip install, cp .env.example (key from the local
+       .env, scratchpad only),
+       build_db, main, show_trace (on new and example traces), pytest, eval.
+       Record the outputs. Fix the README if a command
+       differs. The eval in the copy writes the copy's report, so
+       docs/eval-report.md here stays unchanged.
+     - Mermaid renders (GitHub syntax) and matches graph.py (9 nodes,
+       conditional edges).
+     - Every SQL/result/answer in examples.md is copied from a trace (checked
+       with show_trace).
+     - All relative links in the new docs point at existing files (a small ls
+       check).
+     - git diff --stat src/agent is empty.
+     - No commit unless you ask.
+
+⏺ The plan is approved. First I'll generate the mermaid diagram from the real
+  graph and run the tests.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ All 114 tests pass. Next I'll make the three new real runs for the examples.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ The new runs check out against the DB, but I found that step 2 still runs with
+  its own retry when step 1 is empty, which I'll note as a limitation. Next I'm
+  copying the traces and reading the full existing ones. · summary
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Now I'll skim sessions 03 to 06 to fill in the key decisions.
+
+  Ran 4 shell commands (ctrl+o to expand)
+
+⏺ I have what I need, so I'm writing the docs now. README first.
+
+⏺ Write(README.md)
+  ⎿  Wrote 161 lines to README.md
+       1 # University QA Agent
+       2 
+       3 Ask a question about a university database in plain English: "Wh
+         ich teacher had the
+       4 highest average grade in Fall 2025?". A LangGraph agent plans th
+         e question (1-3 steps),
+       5 writes one SQL query per step, checks the query, runs it on a **
+         read-only** SQLite
+       6 connection and writes the answer **only from the rows it got bac
+         k**. Vague questions pause
+     … +155 lines (ctrl+o to expand)
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+⏺ Next, production.md, known-limitations.md and examples.md.
+
+⏺ Write(docs/production.md)
+  ⎿  Wrote 91 lines to docs/production.md
+       1 # Production notes
+       2 
+       3 This is a homework-sized system: one process, a CLI and a small 
+         SQLite file. This page lists
+       4 what really exists now and what I would add before real users. N
+         othing in the "Would add"
+       5 lists is built.
+       6 
+       7 ## Reliability
+       8 
+     … +83 lines (ctrl+o to expand)
+
+⏺ Write(docs/known-limitations.md)
+  ⎿  Wrote 73 lines to docs/known-limitations.md
+       1 # Known limitations
+       2 
+       3 Everything here was seen in real runs or follows from the code. 
+         None of it is fixed.
+       4 
+       5 ## Answers and reasoning
+       6 
+       7 - **The multi-step question can be read two ways.** In "Which te
+         acher had the highest
+       8   average grade in Fall 2025, and which students failed a course
+     … +66 lines (~5 KB) (ctrl+o to expand)
+
+  Searched for 1 pattern, ran 1 shell command (ctrl+o to expand)
+
+⏺ Update(docs/known-limitations.md)
+  ⎿  Added 1 line, removed 1 line
+      25    we checked (3 of 3 for Maria Garcia after the rule was made s
+          tronger), but nothing enforces them in code.
+      26  - **Later steps copy ids through the prompt.** Step 2 sees step
+           1's result as a table of at
+      27    most 50 rows (`MAX_ROWS_IN_PROMPT`) and copies the ids into i
+          ts SQL. If step 1 has more
+      28 -  than 50 rows, step 2 can't see them all.                     
+      28 +  than 50 rows, step 2 is told "(showing 50 of N rows)" but can
+         +'t see the rest.                                               
+      29  - **Model-written ordering can be wrong.** In the duplicate-nam
+          es trace the model sorted by
+      30    `s.year, s.term`, and `term` is text, so Spring 2025 came aft
+          er Fall 2025. The answer
+      31    still listed the right grades.
+
+⏺ Update(docs/known-limitations.md)
+  ⎿  Added 3 lines, removed 2 lines
+      55  - **`LIMIT` is not universal SQL.** SQL Server uses `TOP`. The 
+          validator adds `LIMIT 200`,
+      56    which works on SQLite, Postgres and MySQL.
+      57  - **"Has a LIMIT" means a LIMIT anywhere**, so a LIMIT in a sub
+          query stops the outer LIMIT from being added.
+      58 -- **200-row cap:** a result of exactly 200 rows may have been c
+         -ut, and the answer prompt                                      
+      59 -  sees at most 50 rows. The answer is not told that rows were c
+         -ut.                                                            
+      58 +- **200-row cap:** a result of exactly 200 rows may have been c
+         +ut by the added `LIMIT`, and                                   
+      59 +  nothing tells the model so. Beyond 50 rows, the answer prompt
+         + shows the first 50 with                                       
+      60 +  "(showing 50 of N rows)".                                    
+      61  - **The keyword check is a denylist.** It misses `REPLACE`, `AT
+          TACH`, `PRAGMA`... The read-only
+      62    connection is what protects the data
+      63    ([sql-validation-and-security.md](sql-validation-and-security
+          .md)).
+
+⏺ Update(docs/known-limitations.md)
+  ⎿  Added 2 lines, removed 2 lines
+      42  - **And strict in other ways:** values must match exactly, so a
+           course given by code where
+      43    the reference uses the title fails. The reference shape for #
+          6 is one reason it fails.
+      44  - **One run per question:** 9/10 is one sample, and the variati
+          on between runs is not measured.
+      45 -- **Ties in the reference:** the "best teacher" reference queri
+         -es use `ORDER BY AVG DESC                                      
+      46 -  LIMIT 1`, so they would drop a tie. There is no tie in the se
+         -ed data, so this does not matter for the current               
+      45 +- **Ties in the reference:** the "best teacher" part of the #9 
+         +and #10 references uses `ORDER BY                              
+      46 +  AVG(grade) DESC LIMIT 1`, so it would drop a tie. There is no
+         + tie in the seed data, so this does not matter for the current 
+      47    score. The agent itself keeps ties (`= MAX(...)`).
+      48  - 10 questions on one small seeded database. This shows the mai
+          n paths work. It is not a benchmark.
+      49  
+
+⏺ Now examples.md, with everything copied from the traces:
+
+⏺ Write(docs/examples.md)  ⎿  Wrote 287 lines to docs/examples.md
+       1 # Examples from real runs
+       2 
+       3 All runs used `gpt-4.1-mini` on the seeded database. Each SQL bl
+         ock, result and answer
+       4 below is copied from the trace file named in the example. Nothin
+         g is invented or edited. The
+       5 SQL is shown after `validate_sql`, which adds `LIMIT 200` when i
+         t is missing. View any run with
+       6 `python -m src.show_trace traces/examples/<file>`.
+       7 
+     … +280 lines (ctrl+o to expand)
+
+⏺ Next: the traces README, the sessions README, and the planner doc touch-up.
+
+⏺ Update(traces/examples/README.md)
+  ⎿  Added 4 lines, removed 1 line
+       5  
+       6  | File | Question | What it shows |
+       7  |---|---|---|
+       8 -| `simple-success.jsonl` | How many students are there? | Happy
+         - path: generate -> validate (LIMIT added) -> execute -> check -
+         -> answer |                                                     
+       8 +| `aggregation-failed-students.jsonl` | How many students faile
+         +d at least one course? | Planner -> 1 step, pass-mark rule from
+         + the notes file (grade < 60, NULL excluded) |                  
+       9 +| `join-teacher-semester.jsonl` | Which courses did Daniel Kim 
+         +teach in Spring 2026? | Join over 4 tables with teacher and sem
+         +ester filters (a student has the same name) |                  
+      10 +| `empty-result-two-steps.jsonl` | Which students took the cour
+         +se Quantum Basket Weaving? | With the planner: 2 steps, each em
+         +pty -> one retry with the same filter -> accepted -> "no matchi
+         +ng records" without an LLM call |                              
+      11 +| `simple-success.jsonl` | How many students are there? | (mile
+         +stone 4, before the planner) Happy path: generate -> validate (
+         +LIMIT added) -> execute -> check -> answer |                   
+      12  | `out-of-scope-delete.jsonl` | Delete all students who failed 
+          a course | Planner says `out_of_scope` -> decline. No SQL is ge
+          nerated or run (in milestone 4 this produced a SELECT and "Dele
+          te students with these IDs") |
+      13  | `multi-step.jsonl` | Which teacher had the highest average gr
+          ade in Fall 2025, and which students failed a course taught by 
+          that teacher | 2 steps; step 2's SQL uses `teacher_id = 3` take
+          n from step 1's result |
+      14  | `clarification-interrupt.jsonl` | Who is the best teacher? | 
+          `needs_clarification` -> paused with interrupt() -> user replie
+          d "the highest average grade in Fall 2025" -> plan again -> ans
+          wered |
+
+⏺ Update(traces/examples/README.md)
+  ⎿  Added 1 line, removed 1 line
+      14  | `clarification-interrupt.jsonl` | Who is the best teacher? | 
+          `needs_clarification` -> paused with interrupt() -> user replie
+          d "the highest average grade in Fall 2025" -> plan again -> ans
+          wered |
+      15  | `duplicate-names.jsonl` | What grades did Maria Garcia get? |
+           Two students share the name: no clarification, the answer list
+          s both by id |
+      16  | `bug-planner-null-steps.jsonl` | (the multi-step question) | 
+          Bug found through the trace: the planner reply had `"steps": nu
+          ll`, failed to parse, and the fallback ran the whole question a
+          s one step. See docs/planner-and-multistep.md |
+      17 -| `empty-result-retry.jsonl` | Which students took the course Q
+         -uantum Basket Weaving? | Empty result -> one retry with the hin
+         -t -> model keeps the same filter -> second empty result accepte
+         -d -> "no matching records" without an LLM call |               
+      17 +| `empty-result-retry.jsonl` | Which students took the course Q
+         +uantum Basket Weaving? | (milestone 4, before the planner) Empt
+         +y result -> one retry with the hint -> model keeps the same fil
+         +ter -> second empty result accepted -> "no matching records" wi
+         +thout an LLM call |                                            
+      18  
+      19  View one with: `python -m src.show_trace traces/examples/empty-
+          result-retry.jsonl`
+      20  
+
+⏺ Update(traces/examples/README.md)
+  ⎿  Added 4 lines, removed 1 line
+      18  
+      19  View one with: `python -m src.show_trace traces/examples/empty-
+          result-retry.jsonl`
+      20  
+      21 -Still to add when they happen in real runs: an SQL-error retry 
+         -and a give_up.                                                 
+      21 +Walked through with SQL, results and answers in [docs/examples.
+         +md](../../docs/examples.md).                                   
+      22 +                                                               
+      23 +Still to add when they happen in real runs: an SQL-error retry 
+         +and a give_up (both are                                        
+      24 +covered by e2e tests with the fake LLM in `tests/test_graph_e2e
+         +.py`).                                                         
+
+⏺ Update(docs/planner-and-multistep.md)
+  ⎿  Added 2 lines, removed 1 line
+      81  Open point about reading the question: the model reads "failed 
+          a course taught by that
+      82  teacher" as "in Fall 2025" too. On the seed data this changes t
+          he answer: no students in Fall
+      83  2025, but in other semesters two students failed one of Priya S
+          hah's courses (Lucas Silva,
+      84 -Spring 2025; Ethan Miller, Spring 2026). The milestone 6 eval s
+         -et should fix one reading.                                     
+      84 +Spring 2025; Ethan Miller, Spring 2026). The eval set asks both
+         + readings explicitly                                           
+      85 +(#9 "in any semester", #10 "in Fall 2025"), and both pass. See 
+         +docs/known-limitations.md.                                     
+      86  
+      87  ## Bug found through a trace: `"steps": null`
+      88  
+
+⏺ Write(docs/agent-sessions/README.md)
+  ⎿  Added 11 lines, removed 14 lines
+      20  | # | File | Milestone | Key decisions made in this session |
+      21  | --- | --- | --- | --- |
+      22  | 00 | [00-setup-notes.txt](00-setup-notes.txt) | Design decisi
+          ons and setup (notes, no code) | Python + LangGraph; fixed work
+          flow instead of a ReAct agent; SQLAlchemy + SQLite; simple SQL 
+          validation + read-only connection; LangSmith + local trace file
+          s; planner with up to 3 steps |
+      23 -| 01 | [01-schema-and-seed.txt](01-schema-and-seed.txt) | Schem
+         -a + seed data |                                                
+      24 -one name column;                                               
+      25 -grade on enrollment,                                           
+      26 -NULL = ungraded; one section per course per semester;          
+      27 -11 edge cases in the seed data”|                               
+      28 -| 02 | [02-minimal-graph.txt](02-minimal-graph.txt) | First wor
+         -king graph | read-only DB in two layers;                       
+      29 -schema read by the inspector; dialect from the engine;         
+      30 -results reducer; answer node skips the LLM on errors or empty r
+         -esults”|                                                       
+      31 -| 03 | [03-validation-and-retries.txt](03-validation-and-retrie
+         -s.txt) | Validation, error handling, retries | |               
+      32 -| 04 | [04-tracing.txt](04-tracing.txt) | Tracing | |          
+      33 -| 05 | [05-planner-and-db-agnostic.txt](05-planner-and-db-agnos
+         -tic.txt) | Multi-step planner, clarification, DB-agnostic confi
+         -g | |                                                          
+      34 -| 06 | [06-tests-and-evals.txt](06-tests-and-evals.txt) | Unit 
+         -tests + evaluation set | |                                     
+      35 -| 07 | [07-docs.txt](07-docs.txt) | Documentation, examples, tr
+         -aces | |                                                       
+      23 +| 01 | [01-schema-and-seed.txt](01-schema-and-seed.txt) | Schem
+         +a + seed data | One name column; grade on the enrollment, NULL 
+         += ungraded; one section per course per semester; 11 edge cases 
+         +in the seed data |                                             
+      24 +| 02 | [02-minimal-graph.txt](02-minimal-graph.txt) | First wor
+         +king graph | Read-only DB in two layers (`mode=ro` + `PRAGMA qu
+         +ery_only`); schema read by the inspector; dialect from the engi
+         +ne; `results` reducer; answer node skips the LLM on errors or e
+         +mpty results |                                                 
+      25 +| 03 | [03-validation-retries.txt](03-validation-retries.txt) |
+         + Validation, error handling, retries | One pure `validate_sql()
+         +` with a test per rule (quotes and comments ignored, so `'DROPP
+         +ED'` is not flagged); `empty_retry_used` + `last_result` added 
+         +to the state so `results` holds accepted results only; the empt
+         +y retry may fix mistakes but never widen a filter; a single all
+         +-NULL row counts as empty, COUNT = 0 does not; max 3 attempts, 
+         +then `give_up` without an LLM call; the keyword check is a guar
+         +drail, the read-only DB is the security boundary |             
+      26 +| 04 | [04-tracing.txt](04-tracing.txt) | Tracing | Tracing in 
+         +its own module: the nodes don't know about it, and what a node 
+         +returns is what gets traced (`stream_mode="updates"`); LangSmit
+         +h run id = local file name; rows cut to 20 with `row_count`; `s
+         +how_trace` timeline; `traces/*.jsonl` git-ignored, curated `tra
+         +ces/examples/` committed; no faked traces for paths that didn't
+         + happen; found that "Delete all students..." was answered with 
+         +a SELECT, which became input for the planner |                 
+      27 +| 05 | [05-planner.txt](05-planner.txt) | Multi-step planner, c
+         +larification, DB-agnostic config | Planner with 3 decisions and
+         + the whole plan kept in the state; JSON in the prompt + Pydanti
+         +c instead of `with_structured_output`; `ask_user` as a separate
+         + node with `interrupt()` + `InMemorySaver`, at most one questio
+         +n; ties and same-name records are not reasons to ask; `DATABASE
+         +_URL` / `NOTES_PATH` in `src/config.py`, non-SQLite URLs refuse
+         +d; **bug found through a trace:** `"steps": null` made the plan
+         +ner fall back to one step |                                    
+      28 +| 06 | [06-test-and-eval.txt](06-test-and-eval.txt) | Unit test
+         +s + evaluation set | Fake LLM that returns scripted strings and
+         + fails on an unscripted call; one e2e test per graph path that 
+         +checks the exact node sequence; eval compares results, not SQL 
+         +(columns picked, rows as sets, numbers rounded); reference quer
+         +ies tested in pytest; first run 6/10 → 3 references were wrong 
+         +(read in the traces) and fixed → 9/10; #6 left as a real miss |
+      29 +| 07 | [07-docs.txt](07-docs.txt) | Documentation, examples, tr
+         +aces | Root README with a mermaid diagram generated from the co
+         +mpiled graph; examples only from real traces (3 new runs record
+         +ed with the planner); honest production notes (now vs would add
+         +) and known limitations; every README command checked in a clea
+         +n copy |                                                       
+      30  
+      31  ## Where to look first
+      32  
+      33  - **How the architecture was chosen:** 00 and 02
+      40 -- **How problems were found and fixed:** <!-- fill in: the sess
+         -ion where you debugged a real issue -->                        
+      34 +- **How problems were found and fixed:** 05 (the `"steps": null
+         +` planner bug found through a                                  
+      35 +  trace, the Maria Garcia clarification, the endless clarificat
+         +ion loop on an empty reply) and 06 (the                        
+      36 +  first eval run at 6/10: the failures were read in their trace
+         +s and 3 turned out to be reference mistakes)                   
+      37 +- **Validation and security reasoning:** 03                    
+
+⏺ Docs are written. Now the clean-copy check of every README command:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The tests pass in the clean copy with no API key. Next I'll set only the
+  OpenAI key, like a new user would, and run main, show_trace and the eval:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ All commands work, and the eval scored 9/10 again in about 47 seconds. One
+  more check: does LANGSMITH_TRACING=true with an empty LangSmith key print
+  warnings?
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ .env.example ships with LANGSMITH_TRACING=true, so new users without a
+  LangSmith key see a 401 dump on every run. I'm switching that default to false
+  and updating the README line. · summary
+
+⏺ Bash(sed -i '' 's/^# Optional: LangSmith tracing$/# Optional: LangSmith
+      tracing. Set to true only together with LANGSMITH_API_KEY,\n# otherwise
+      every run prints 401…)
+  ⎿  OPENAI_API_KEY=
+     OPENAI_MODEL=gpt-4.1-mini
+     … +13 lines (ctrl+o to expand)
+  ⎿  Updated .env.example (+3 -2)
+      1  OPENAI_API_KEY=
+      2  OPENAI_MODEL=gpt-4.1-mini
+      3  
+      4 -# Optional: LangSmith tracing                                   
+      5 -LANGSMITH_TRACING=true                                          
+      4 +# Optional: LangSmith tracing. Set to true only together with LA
+        +NGSMITH_API_KEY,                                                
+      5 +# otherwise every run prints 401 errors (the local traces/ file 
+        +is always written).                                             
+      6 +LANGSMITH_TRACING=false                                         
+      7  LANGSMITH_API_KEY=
+      8  LANGSMITH_PROJECT=
+      9  
+
+⏺ Update(README.md)
+  ⎿  Added 2 lines, removed 1 line
+      67  python3.11 -m venv venv
+      68  source venv/bin/activate
+      69  pip install -r requirements.txt
+      70 -cp .env.example .env          # then set OPENAI_API_KEY (LangSm
+         -ith keys are optional)                                         
+      70 +cp .env.example .env          # then set OPENAI_API_KEY; for La
+         +ngSmith also set                                               
+      71 +                              # LANGSMITH_API_KEY and LANGSMITH
+         +_TRACING=true                                                  
+      72  
+      73  python -m src.db.build_db     # builds db/university.db from db
+          /schema.sql + db/seed.sql
+      74  ```
+
+  Ran 4 shell commands (ctrl+o to expand)
+  ⎿  2 actions not run · auto mode's check had no usable answer
+
+⏺ Milestone 7 is done. I ran every README command in a clean copy of the project
+  and each one works. I didn't touch src/agent, and nothing is committed.
+
+  What's new
+  - README.md: what the project does, and the mermaid diagram generated from the
+    compiled graph (get_graph().draw_mermaid(), nothing drawn by hand). Also
+    the setup from zero, a table of the 8 design decisions with the reason for
+    each, the project layout, links to every doc, and the AI-usage section.
+  - docs/production.md: reliability, scalability, monitoring, security and
+    deployment, each split into "Now" and "Would add".
+  - docs/examples.md: 7 real runs with SQL, results and answers copied from
+    trace files (aggregation, a 4-table join, multi-step, same name,
+    clarification, rejected, empty result). I recorded 3 new runs with the
+    planner for this. They're saved in traces/examples/ and added to that
+    folder's README.
+  - docs/known-limitations.md: everything you listed, plus a few things I found
+    while writing:
+    - when step 1 returns nothing, step 2 still runs and gets its own retry, so
+      4 SQL generations for a course that doesn't exist;
+    - the model sorts semesters as text, so Spring 2025 comes after Fall 2025;
+    - the planner dropped the grade column in eval #6;
+    - LLM API errors aren't handled inside the graph;
+    - a result cut at exactly 200 rows isn't flagged to the model.
+  - docs/agent-sessions/README.md: three links pointed at wrong file names (03,
+    05, 06) and some table cells had stray ” characters; both are fixed. Key
+    decisions are filled in for 03–07, and the "Where to look first" line is
+    done.
+  - docs/planner-and-multistep.md: the open point about the two readings now
+    points at eval #9 and #10.
+
+  Checked in the clean copy: venv, install, build the db, pytest (114 passed
+  with no API key), src.main, show_trace on a new trace and an example trace,
+  and src.eval (9/10 again, about 47 s).
+
+  One fix outside the docs: .env.example had LANGSMITH_TRACING=true. Anyone who
+  set only the OpenAI key got a dump of LangSmith 401 errors on every run,
+  though the answer still came out. It now defaults to false with a comment, and
+  the README says to set the key and true together. I ran it again after the
+  change and there were no errors.
+
+  What a reviewer should read first, in order
+  1. README.md
+  2. src/agent/graph.py: the whole workflow and its routing on one screen
+  3. src/agent/state.py
+  4. src/agent/nodes.py and src/agent/planner.py
+  5. src/agent/prompts.py
+  6. src/agent/sql_validation.py and connect_readonly in src/db/database.py
+  7. docs/planner-and-multistep.md, which has the bug found through a trace
+  8. docs/eval-report.md and src/eval/compare.py
+  9. python -m src.show_trace traces/examples/multi-step.jsonl
+  10. tests/test_graph_e2e.py with tests/fake_llm.py
+  11. docs/known-limitations.md, then docs/production.md
+
+  Left for you: run /export docs/agent-sessions/07-docs.txt and check it for
+  keys. That link in the sessions README is the only broken one right now. Then
+  tell me when to commit; milestones 5 and 6 are still uncommitted too.
+
+✻ Cooked for 6m 58s · done 9:12 AM
