@@ -20,7 +20,11 @@ project, as requested in the submission guidelines.
 | # | File | Milestone | Key decisions made in this session |
 | --- | --- | --- | --- |
 | 00 | [00-setup-notes.txt](00-setup-notes.txt) | Design decisions and setup (notes, no code) | Python + LangGraph; fixed workflow instead of a ReAct agent; SQLAlchemy + SQLite; simple SQL validation + read-only connection; LangSmith + local trace files; planner with up to 3 steps |
-| 01 | [01-schema-and-seed.txt](01-schema-and-seed.txt) | Schema + seed data | |
+| 01 | [01-schema-and-seed.txt](01-schema-and-seed.txt) | Schema + seed data | 
+one name column; 
+grade on enrollment, 
+NULL = ungraded; one section per course per semester;
+11 edge cases in the seed data”|
 | 02 | [02-minimal-graph.txt](02-minimal-graph.txt) | First working graph | |
 | 03 | [03-validation-and-retries.txt](03-validation-and-retries.txt) | Validation, error handling, retries | |
 | 04 | [04-tracing.txt](04-tracing.txt) | Tracing | |

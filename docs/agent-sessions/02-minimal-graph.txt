@@ -1,0 +1,704 @@
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~/Work/langgraph-sql-agent-genpact
+
+  Fable 5.2 is here for your longest and toughest coding tasks, and is included in your plan until November 16. It draws down usage faster than Opus 5.5. Switch with /model.
+  1 more notice hidden
+
+❯ read CLAUDE.md. milestone 1 is done (db/ and src/db/build_db.py).             
+                                                                                
+  milestone 2: the smallest working graph, end to end. propose a plan, no code  
+  yet.                                                                          
+                                                                                
+  scope:                                                                        
+  db layer with SQLAlchemy: read-only connection, a function that reads the     
+  schema with the inspector and turns it into text for the prompt, a function   
+  that runs a query and returns rows                                            
+  one config file with the university notes (pass mark 60, current semester     
+  Fall 2026, NULL grade = not graded yet)                                       
+  state (TypedDict) with all the fields from CLAUDE.md, even if some are used   
+  later                                                                         
+  prompts in one file                                                           
+  graph with only 3 nodes: generate_sql → execute_sql → answer, no retries yet  
+  a small CLI: python -m src.main "question"                                    
+  the model name comes from OPENAI_MODEL in .env, and use temperature 0         
+                                                                                
+  not in this milestone: validation, retries, planner, tracing, tests for the   
+  agent                                                                         
+                                                                                
+  also tell me how the schema text will look in the prompt, and how the answer  
+  node makes sure it only uses the real results                                 
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Updated plan
+  ⎿  /plan to preview
+  ⎿  User rejected Claude's plan:
+     ╭─────────────────────────────────────────────────────────────────────────╮
+     │ Milestone 2 — smallest working graph, end to end                        │
+     │                                                                         │
+     │ Context                                                                 │
+     │                                                                         │
+     │ Milestone 1 gave us db/schema.sql, db/seed.sql and src/db/build_db.py   │
+     │ (builds db/university.db).                                              │
+     │ Milestone 2 makes the first real question → SQL → rows → answer path    │
+     │ work through a 3-node                                                   │
+     │ LangGraph graph, with a CLI. No validation, retries, planner, tracing   │
+     │ or agent tests yet.                                                     │
+     │ No new packages (sqlalchemy, langgraph, langchain-openai, python-dotenv │
+     │ are already in requirements.txt).                                       │
+     │                                                                         │
+     │ Files                                                                   │
+     │                                                                         │
+     │ ┌───────────────────────────┬────────────────────────────────────────── │
+     │ ───┐                                                                    │
+     │ │           File            │                What it holds              │
+     │   │                                                                     │
+     │ ├───────────────────────────┼────────────────────────────────────────── │
+     │ ───┤                                                                    │
+     │ │ config/university_notes.m │ The only university-specific text: pass   │
+     │   │                                                                     │
+     │ │ d                         │ mark, current semester, NULL grade,       │
+     │ column  │                                                               │
+     │ │                           │ meanings. Injected into prompts verbatim. │
+     │   │                                                                     │
+     │ ├───────────────────────────┼────────────────────────────────────────── │
+     │ ───┤                                                                    │
+     │ │                           │ connect_readonly(db_path) -> Engine,      │
+     │   │                                                                     │
+     │ │ src/db/database.py        │ schema_as_text(engine) -> str,            │
+     │   │                                                                     │
+     │ │                           │ run_query(engine, sql) -> QueryResult     │
+     │   │                                                                     │
+     │ ├───────────────────────────┼────────────────────────────────────────── │
+     │ ───┤                                                                    │
+     │ │ src/agent/state.py        │ AgentState TypedDict with all 9 fields    │
+     │   │                                                                     │
+     │ ├───────────────────────────┼────────────────────────────────────────── │
+     │ ───┤                                                                    │
+     │ │ src/agent/prompts.py      │ GENERATE_SQL_PROMPT, ANSWER_PROMPT (+     │
+     │ small │                                                                 │
+     │ │                           │  format helpers)                          │
+     │   │                                                                     │
+     │ ├───────────────────────────┼────────────────────────────────────────── │
+     │ ───┤                                                                    │
+     │ │                           │ get_llm():                                │
+     │ ChatOpenAI(model=os.environ["OPE │                                      │
+     │ │ src/agent/llm.py          │ NAI_MODEL"], temperature=0), clear error  │
+     │ if │                                                                    │
+     │ │                           │  unset                                    │
+     │   │                                                                     │
+     │ ├───────────────────────────┼────────────────────────────────────────── │
+     │ ───┤                                                                    │
+     │ │ src/agent/nodes.py        │ generate_sql, execute_sql, answer         │
+     │   │                                                                     │
+     │ ├───────────────────────────┼────────────────────────────────────────── │
+     │ ───┤                                                                    │
+     │ │ src/agent/graph.py        │ build_graph(llm, engine, notes) →         │
+     │ compiled  │                                                             │
+     │ │                           │ graph; initial_state(question)            │
+     │   │                                                                     │
+     │ ├───────────────────────────┼────────────────────────────────────────── │
+     │ ───┤                                                                    │
+     │ │ src/main.py               │ python -m src.main "question"             │
+     │   │                                                                     │
+     │ ├───────────────────────────┼────────────────────────────────────────── │
+     │ ───┤                                                                    │
+     │ │ tests/test_database.py    │ DB-layer tests only (read-only enforced,  │
+     │   │                                                                     │
+     │ │                           │ schema text, run_query) — no agent tests  │
+     │   │                                                                     │
+     │ └───────────────────────────┴────────────────────────────────────────── │
+     │ ───┘                                                                    │
+     │                                                                         │
+     │ DB layer (src/db/database.py)                                           │
+     │                                                                         │
+     │ - Read-only, two layers: open the file as                               │
+     │   sqlite:///file:{path}?mode=ro&uri=true (SQLite refuses writes at the  │
+     │   file level) and add a SQLAlchemy connect event that runs PRAGMA       │
+     │   query_only = ON (the rule in CLAUDE.md). Fails                        │
+     │   fast if the DB file doesn't exist (tells you to run python -m         │
+     │   src.db.build_db).                                                     │
+     │ - schema_as_text(engine) uses sqlalchemy.inspect: get_table_names,      │
+     │   get_columns, get_pk_constraint,                                       │
+     │   get_foreign_keys, get_unique_constraints, get_check_constraints. No   │
+     │   table names in code.                                                  │
+     │ - run_query(engine, sql) → QueryResult(columns: list[str], rows:        │
+     │   list[tuple]) (small dataclass), using                                 │
+     │   text(sql). Errors propagate as exceptions; the node catches them.     │
+     │                                                                         │
+     │ Config (config/university_notes.md)                                     │
+     │                                                                         │
+     │ Plain markdown, loaded once by path in main.py and passed into          │
+     │ build_graph. Contents (draft):                                          │
+     │ - Grades are numeric 0-100, stored on enrollments.grade.                │
+     │ - Pass mark is 60: grade >= 60 passes, grade < 60 fails.                │
+     │ - grade IS NULL means "not graded yet" (course still running). Exclude  │
+     │ NULLs from averages and pass/fail                                       │
+     │   counts, and never treat NULL as 0.                                    │
+     │ - The current semester is 'Fall 2026' (semesters.name). "This semester" │
+     │ / "currently" means Fall 2026.                                          │
+     │ - Semester names look like 'Fall 2025', 'Spring 2026'.                  │
+     │ - Names are not unique (two students can share a name); use ids to tell │
+     │ people apart and mention it.                                            │
+     │ (SQLite's inspector doesn't return the -- comments from schema.sql, so  │
+     │ meaning lives here.)                                                    │
+     │                                                                         │
+     │ How the schema text looks in the prompt                                 │
+     │                                                                         │
+     │ Generated, compact, one block per table:                                │
+     │ Table courses                                                           │
+     │   id INTEGER PK                                                         │
+     │   code TEXT NOT NULL UNIQUE                                             │
+     │   title TEXT NOT NULL                                                   │
+     │   credits INTEGER NOT NULL                                              │
+     │   department_id INTEGER NOT NULL -> departments.id                      │
+     │   CHECK (credits > 0)                                                   │
+     │                                                                         │
+     │ Table enrollments                                                       │
+     │   id INTEGER PK                                                         │
+     │   student_id INTEGER NOT NULL -> students.id                            │
+     │   offering_id INTEGER NOT NULL -> course_offerings.id                   │
+     │   grade REAL NULL                                                       │
+     │   UNIQUE (student_id, offering_id)                                      │
+     │   CHECK (grade BETWEEN 0 AND 100)                                       │
+     │ ...                                                                     │
+     │ The generate_sql prompt is then: role + "SQLite dialect, one SELECT,    │
+     │ return only SQL" + ## Schema (above) +                                  │
+     │ ## Business rules (notes file) + ## Question. Model output is plain     │
+     │ text; a tiny extract_sql() strips                                       │
+     │ ``` fences. (Plain text instead of with_structured_output so the later  │
+     │ fake-LLM tests stay trivial.)                                           │
+     │                                                                         │
+     │ State (src/agent/state.py)                                              │
+     │                                                                         │
+     │ question: str, steps: list[str], step_index: int, sql: str, error: str  │
+     │ | None, attempts: int, results: list[dict], answer: str, status: str.   │
+     │ initial_state(question) sets steps=[question], step_index=0,            │
+     │ attempts=0, results=[], error=None, status="running" — so in milestone  │
+     │ 4 the planner simply replaces how steps gets filled.                    │
+     │ Each entry in results: {"step", "sql", "columns", "rows"}.              │
+     │                                                                         │
+     │ Graph (src/agent/graph.py)                                              │
+     │                                                                         │
+     │ START → generate_sql → execute_sql → answer → END, linear edges.        │
+     │ build_graph(llm, engine, notes) binds dependencies with                 │
+     │ functools.partial, so later tests pass a fake LLM and a                 │
+     │ test DB without patching. Schema text is computed once in build_graph,  │
+     │ not per call.                                                           │
+     │                                                                         │
+     │ Nodes (each returns only the keys it changes):                          │
+     │ - generate_sql → {"sql"} — prompt with schema + notes +                 │
+     │   steps[step_index].                                                    │
+     │ - execute_sql → success: {"results": results + [entry], "error": None}; │
+     │   failure: {"error": str(exc), "status": "error"}.                      │
+     │ - answer → {"answer", "status"} (see below).                            │
+     │                                                                         │
+     │ How the answer node stays grounded in real results                      │
+     │                                                                         │
+     │ 1. No LLM when there's nothing real to use: if error is set → fixed     │
+     │    message ("I couldn't run the query: …",                              │
+     │    status error). If the result has 0 rows → fixed "The query returned  │
+     │    no matching records." (status done).                                 │
+     │    The model can't invent an answer from nothing.                       │
+     │ 2. Only the results go in: the prompt contains the question, the SQL    │
+     │    that ran, and the rows as a small                                    │
+     │    markdown table (column headers from QueryResult.columns). Schema and │
+     │    notes are not passed, so it has no                                   │
+     │    material to reason beyond the data. Large results: first 50 rows     │
+     │    shown plus "showing 50 of N rows".                                   │
+     │ 3. Explicit rules in ANSWER_PROMPT: answer only from the table; copy    │
+     │    numbers exactly (no recomputing or                                   │
+     │    rounding beyond 2 decimals); if the table doesn't answer the         │
+     │    question, say so; don't mention data not in the                      │
+     │    table; temperature 0.                                                │
+     │ 4. The SQL and rows stay in state, so the CLI prints them next to the   │
+     │    answer and a human can check it                                      │
+     │    (tracing in a later milestone builds on this).                       │
+     │                                                                         │
+     │ CLI (src/main.py)                                                       │
+     │                                                                         │
+     │ load_dotenv() → connect_readonly(DEFAULT_DB_PATH) (reuse from           │
+     │ src/db/build_db.py) → read notes →                                      │
+     │ build_graph(get_llm(), engine, notes).invoke(initial_state(question)) → │
+     │ print SQL, row count, answer.                                           │
+     │ Usage error if no question argument.                                    │
+     │                                                                         │
+     │ Verification                                                            │
+     │                                                                         │
+     │ 1. python -m src.db.build_db then pytest (existing tests/test_db.py +   │
+     │    new tests/test_database.py: INSERT                                   │
+     │    through run_query raises, schema text lists every table and an FK    │
+     │    arrow, a simple SELECT returns rows).                                │
+     │ 2. Manual end-to-end with the real model:                               │
+     │    - python -m src.main "How many students are there?" (simple count)   │
+     │    - python -m src.main "What is the average grade in CS301 in Fall     │
+     │      2025?" (join + filter + aggregation)                               │
+     │    - python -m src.main "Which students failed a course?" (pass-mark    │
+     │      rule from notes)                                                   │
+     │    - python -m src.main "Who teaches courses this semester?"            │
+     │      (current-semester rule)                                            │
+     │      Check printed SQL against the answer by hand.                      │
+     │ 3. Export the session to docs/agent-sessions/02-minimal-graph.txt       │
+     │    (check for keys first).                                              │
+     ╰─────────────────────────────────────────────────────────────────────────╯
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+  Ran 1 shell command, wrote 1 memory (ctrl+o to expand)
+
+⏺ User approved Claude's plan
+  ⎿  Plan saved to: 
+     ~/.claude/plans/pasted-content-id-ba67-read-claude-md-composed-lampson.md ·
+     /plan to edit
+     Milestone 2 — smallest working graph, end to end
+
+     Context
+
+     Milestone 1 gave us db/schema.sql, db/seed.sql and src/db/build_db.py
+     (builds db/university.db).
+     Milestone 2 makes the first real question → SQL → rows → answer path work
+     through a 3-node
+     LangGraph graph, with a CLI. No validation, retries, planner, tracing or
+     agent tests yet.
+     No new packages (sqlalchemy, langgraph, langchain-openai, python-dotenv are
+     already in requirements.txt).
+
+     Files
+
+     ┌───────────────────────────┬─────────────────────────────────────────────┐
+     │           File            │                What it holds                │
+     ├───────────────────────────┼─────────────────────────────────────────────┤
+     │ config/university_notes.m │ The only university-specific text: pass     │
+     │ d                         │ mark, current semester, NULL grade, column  │
+     │                           │ meanings. Injected into prompts verbatim.   │
+     ├───────────────────────────┼─────────────────────────────────────────────┤
+     │                           │ connect_readonly(db_path) -> Engine,        │
+     │ src/db/database.py        │ schema_as_text(engine) -> str,              │
+     │                           │ run_query(engine, sql) -> QueryResult       │
+     ├───────────────────────────┼─────────────────────────────────────────────┤
+     │ src/agent/state.py        │ AgentState TypedDict with all 9 fields      │
+     ├───────────────────────────┼─────────────────────────────────────────────┤
+     │ src/agent/prompts.py      │ GENERATE_SQL_PROMPT, ANSWER_PROMPT (+ small │
+     │                           │  format helpers)                            │
+     ├───────────────────────────┼─────────────────────────────────────────────┤
+     │                           │ get_llm(): ChatOpenAI(model=os.environ["OPE │
+     │ src/agent/llm.py          │ NAI_MODEL"], temperature=0), clear error if │
+     │                           │  unset                                      │
+     ├───────────────────────────┼─────────────────────────────────────────────┤
+     │ src/agent/nodes.py        │ generate_sql, execute_sql, answer           │
+     ├───────────────────────────┼─────────────────────────────────────────────┤
+     │ src/agent/graph.py        │ build_graph(llm, engine, notes) → compiled  │
+     │                           │ graph; initial_state(question)              │
+     ├───────────────────────────┼─────────────────────────────────────────────┤
+     │ src/main.py               │ python -m src.main "question"               │
+     ├───────────────────────────┼─────────────────────────────────────────────┤
+     │ tests/test_database.py    │ DB-layer tests only (read-only enforced,    │
+     │                           │ schema text, run_query) — no agent tests    │
+     └───────────────────────────┴─────────────────────────────────────────────┘
+
+     DB layer (src/db/database.py)
+
+     - Read-only, two layers: open the file as
+       sqlite:///file:{path}?mode=ro&uri=true (SQLite refuses writes at the
+       file level) and add a SQLAlchemy connect event that runs PRAGMA 
+       query_only = ON (the rule in CLAUDE.md). Fails
+       fast if the DB file doesn't exist (tells you to run python -m 
+       src.db.build_db).
+     - schema_as_text(engine) uses sqlalchemy.inspect: get_table_names,
+       get_columns, get_pk_constraint,
+       get_foreign_keys, get_unique_constraints, get_check_constraints. No table
+       names in code.
+     - run_query(engine, sql) → QueryResult(columns: list[str], rows: 
+       list[tuple]) (small dataclass), using
+       text(sql). Errors propagate as exceptions; the node catches them.
+
+     Config (config/university_notes.md)
+
+     Plain markdown, loaded once by path in main.py and passed into build_graph.
+     Contents (draft):
+     - Grades are numeric 0-100, stored on enrollments.grade.
+     - Pass mark is 60: grade >= 60 passes, grade < 60 fails.
+     - grade IS NULL means "not graded yet" (course still running). Exclude 
+     NULLs from averages and pass/fail
+       counts, and never treat NULL as 0.
+     - The current semester is 'Fall 2026' (semesters.name). "This semester" / 
+     "currently" means Fall 2026.
+     - Semester names look like 'Fall 2025', 'Spring 2026'.
+     - Names are not unique (two students can share a name); use ids to tell 
+     people apart and mention it.
+     (SQLite's inspector doesn't return the -- comments from schema.sql, so
+     meaning lives here.)
+
+     How the schema text looks in the prompt
+
+     Generated, compact, one block per table:
+     Table courses
+       id INTEGER PK
+       code TEXT NOT NULL UNIQUE
+       title TEXT NOT NULL
+       credits INTEGER NOT NULL
+       department_id INTEGER NOT NULL -> departments.id
+       CHECK (credits > 0)
+
+     Table enrollments
+       id INTEGER PK
+       student_id INTEGER NOT NULL -> students.id
+       offering_id INTEGER NOT NULL -> course_offerings.id
+       grade REAL NULL
+       UNIQUE (student_id, offering_id)
+       CHECK (grade BETWEEN 0 AND 100)
+     ...
+     The generate_sql prompt is then: role + "Write one SELECT in the {dialect}
+     dialect, return only SQL" + ## Schema (above) +
+     ## Business rules (notes file) + ## Question. Model output is plain text; a
+     tiny extract_sql() strips
+     ``` fences. (Plain text instead of with_structured_output so the later
+     fake-LLM tests stay trivial.)
+     {dialect} comes from engine.dialect.name (e.g. sqlite) — no database name
+     is hard-coded in prompts or code.
+
+     State (src/agent/state.py)
+
+     question: str, steps: list[str], step_index: int, sql: str, error: str | 
+     None, attempts: int, results: Annotated[list[dict], operator.add], answer: 
+     str, status: str.
+     results uses an operator.add reducer, so nodes return only the new entries
+     and LangGraph appends them.
+     initial_state(question) sets steps=[question], step_index=0, attempts=0, 
+     results=[], error=None, status="running" — so in milestone 4 the planner
+     simply replaces how steps gets filled.
+     Each entry in results: {"step", "sql", "columns", "rows"}.
+
+     Graph (src/agent/graph.py)
+
+     START → generate_sql → execute_sql → answer → END, linear edges.
+     build_graph(llm, engine, notes) binds dependencies with functools.partial,
+     so later tests pass a fake LLM and a
+     test DB without patching. Schema text is computed once in build_graph, not
+     per call.
+
+     Nodes (each returns only the keys it changes):
+     - generate_sql → {"sql"} — prompt with schema + notes + steps[step_index].
+     - execute_sql → success: {"results": [entry]} (reducer appends); failure:
+       {"error": str(exc), "status": "error"}.
+     - answer → {"answer", "status"} (see below).
+
+     How the answer node stays grounded in real results
+
+     1. No LLM when there's nothing real to use: if error is set → fixed message
+        ("I couldn't run the query: …",
+        status error). If the result has 0 rows → fixed "The query returned no
+        matching records." (status done).
+        The model can't invent an answer from nothing.
+     2. Only the results + the rules to read them: the prompt contains the
+        question, the SQL that ran, the rows as
+        a small markdown table (column headers from QueryResult.columns), and
+        the university notes (so it reads a
+        NULL grade as "not graded yet" and knows the pass mark is 60). The
+        schema is not passed, so it has no
+        material to reason beyond the data. Large results: first 50 rows shown
+        plus "showing 50 of N rows".
+     3. Explicit rules in ANSWER_PROMPT: answer only from the table; copy
+        numbers exactly (no recomputing or
+        rounding beyond 2 decimals); if the table doesn't answer the question,
+        say so; don't mention data not in the
+        table; temperature 0.
+     4. The SQL and rows stay in state, so the CLI prints them next to the
+        answer and a human can check it
+        (tracing in a later milestone builds on this).
+
+     CLI (src/main.py)
+
+     load_dotenv() → connect_readonly(DEFAULT_DB_PATH) (reuse from
+     src/db/build_db.py) → read notes →
+     build_graph(get_llm(), engine, notes).invoke(initial_state(question)) →
+     print SQL, row count, answer.
+     Usage error if no question argument.
+
+     Verification
+
+     1. python -m src.db.build_db then pytest (existing tests/test_db.py + new
+        tests/test_database.py: INSERT
+        through run_query raises, schema text lists every table and an FK arrow,
+        a simple SELECT returns rows).
+     2. Manual end-to-end with the real model:
+        - python -m src.main "How many students are there?" (simple count)
+        - python -m src.main "What is the average grade in CS301 in Fall 2025?"
+          (join + filter + aggregation)
+        - python -m src.main "Which students failed a course?" (pass-mark rule
+          from notes)
+        - python -m src.main "Who teaches courses this semester?"
+          (current-semester rule)
+          Check printed SQL against the answer by hand.
+     3. Export the session to docs/agent-sessions/02-minimal-graph.txt (check
+        for keys first).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Now the files.
+
+⏺ Write(config/university_notes.md)
+  ⎿  Wrote 9 lines to config/university_notes.md
+      1 - Grades are numeric 0-100, stored on enrollments.grade.
+      2 - Pass mark is 60: grade >= 60 passes, grade < 60 fails.
+      3 - grade IS NULL means "not graded yet" (the course is still runni
+        ng). Exclude NULL grades from
+      4   averages and pass/fail counts, and never treat NULL as 0.
+      5 - The current semester is 'Fall 2026' (semesters.name). "This sem
+        ester" / "currently" means Fall 2026.
+      6 - Semester names look like 'Fall 2025' or 'Spring 2026'.
+      7 - A course (courses) is taught in a specific semester by one teac
+        her as a course offering
+     … +2 lines (ctrl+o to expand)
+
+⏺ Write(src/db/database.py)
+  ⎿  Wrote 75 lines to src/db/database.py
+      1 """Read-only database access: connect, describe the schema as tex
+        t, run a query.
+      2 
+      3 Nothing here knows table or column names; the schema is read with
+         the SQLAlchemy inspector.
+      4 """
+      5 from dataclasses import dataclass
+      6 from pathlib import Path
+      7 
+      8 from sqlalchemy import Engine, create_engine, event, inspect, tex
+     … +68 lines (~3 KB) (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ DB layer works and matches the planned schema text. Now the agent.
+
+⏺ Write(src/agent/state.py)
+  ⎿  Wrote 30 lines to src/agent/state.py
+       1 """The state that flows through the graph."""
+       2 import operator
+       3 from typing import Annotated, TypedDict
+       4 
+       5 
+       6 class AgentState(TypedDict):
+       7     question: str
+       8     steps: list[str]          # sub-questions; for now just [que
+         stion], the planner fills it later
+       9     step_index: int           # which step generate_sql is worki
+     … +22 lines (ctrl+o to expand)
+
+⏺ Write(src/agent/prompts.py)
+  ⎿  Wrote 60 lines to src/agent/prompts.py
+       1 """All prompts in one place, plus the helpers that format data i
+         nto them."""
+       2 
+       3 MAX_ROWS_IN_PROMPT = 50
+       4 
+       5 GENERATE_SQL_PROMPT = """You translate questions about a univers
+         ity database into SQL.
+       6 
+       7 Write exactly one read-only SELECT query in the {dialect} SQL di
+         alect that answers the question.
+     … +53 lines (ctrl+o to expand)
+
+⏺ Write(src/agent/llm.py)
+  ⎿  Wrote 11 lines to src/agent/llm.py
+       1 """The chat model used by the agent."""
+       2 import os
+       3 
+       4 from langchain_openai import ChatOpenAI
+       5 
+       6 
+       7 def get_llm() -> ChatOpenAI:
+       8     model = os.getenv("OPENAI_MODEL")
+       9     if not model:
+      10         raise RuntimeError("OPENAI_MODEL is not set. Add it to .
+     … +2 lines (ctrl+o to expand)
+
+⏺ Write(src/agent/nodes.py)
+  ⎿  Wrote 59 lines to src/agent/nodes.py
+      1 """Graph nodes. Each takes the state (plus bound dependencies) an
+        d returns only the keys it changes."""
+      2 import re
+      3 
+      4 from sqlalchemy import Engine
+      5 
+      6 from src.agent import prompts
+      7 from src.agent.state import AgentState
+      8 from src.db.database import run_query
+      9 
+     … +50 lines (ctrl+o to expand)
+
+⏺ Write(src/agent/graph.py)
+  ⎿  Wrote 27 lines to src/agent/graph.py
+      1 """Wire the nodes into a LangGraph graph: generate_sql -> execute
+        _sql -> answer."""
+      2 from functools import partial
+      3 
+      4 from langgraph.graph import END, START, StateGraph
+      5 from sqlalchemy import Engine
+      6 
+      7 from src.agent import nodes
+      8 from src.agent.state import AgentState
+      9 from src.db.database import schema_as_text
+     … +18 lines (ctrl+o to expand)
+⏺ Write(src/agent/__init__.py)
+  ⎿  Wrote 1 line to src/agent/__init__.py
+      1 (No content)
+
+⏺ Write(src/main.py)
+  ⎿  Wrote 36 lines to src/main.py
+       1 """CLI: python -m src.main "How many students are there?" """
+       2 import sys
+       3 from pathlib import Path
+       4 
+       5 from dotenv import load_dotenv
+       6 
+       7 from src.agent.graph import build_graph
+       8 from src.agent.llm import get_llm
+       9 from src.agent.state import initial_state
+      10 from src.db.build_db import DEFAULT_DB_PATH
+     … +26 lines (ctrl+o to expand)
+
+⏺ Write(tests/test_database.py)
+  ⎿  Wrote 46 lines to tests/test_database.py
+       1 """Tests for the read-only DB layer (src/db/database.py). No LLM
+         ."""
+       2 import pytest
+       3 from sqlalchemy.exc import OperationalError
+       4 
+       5 from src.db.build_db import build_database
+       6 from src.db.database import connect_readonly, run_query, schema_
+         as_text
+       7 
+       8 
+     … +38 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Tests pass. One cleanup: I attached table_counts to the engine object in the
+  test, which is a hack. I'll split it into its own fixture.
+
+⏺ Update(tests/test_database.py)
+  ⎿  Added 8 lines, removed 4 lines
+       7  
+       8  
+       9  @pytest.fixture(scope="module")
+      10 -def engine(tmp_path_factory):                                  
+      10 +def db_path(tmp_path_factory):                                 
+      11      path = tmp_path_factory.mktemp("db") / "university.db"
+      12 -    counts = build_database(path)                              
+      13 -    engine = connect_readonly(path)                            
+      14 -    engine.table_counts = counts  # handy for assertions below 
+      12 +    build_database(path)                                       
+      13 +    return path                                                
+      14 +                                                               
+      15 +                                                               
+      16 +@pytest.fixture(scope="module")                                
+      17 +def engine(db_path):                                           
+      18 +    engine = connect_readonly(db_path)                         
+      19      yield engine
+      20      engine.dispose()
+      21  
+
+⏺ Update(tests/test_database.py)
+  ⎿  Added 5 lines, removed 1 line
+      37  
+      38  def test_schema_text_lists_every_table_and_foreign_keys(engine)
+          :
+      39      text = schema_as_text(engine)
+      40 -    for table in engine.table_counts:                          
+      40 +    tables = [row[0] for row in run_query(                     
+      41 +        engine, "SELECT name FROM sqlite_master WHERE type = 't
+         +able'"                                                         
+      42 +    ).rows]                                                    
+      43 +    assert len(tables) == 7                                    
+      44 +    for table in tables:                                       
+      45          assert f"Table {table}" in text
+      46      assert "student_id INTEGER NOT NULL -> students.id" in text
+      47      assert "grade REAL NULL" in text
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ All four run end to end. I'll check two of the answers against the database
+  myself.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ I built milestone 2 with your three changes, and it works end to end. All 36
+  tests pass (the existing DB tests plus 5 new DB-layer tests), and four
+  questions sent to the real model gave correct answers.
+
+  Your three changes
+  - Dialect from the engine: the prompt says "the {dialect} SQL dialect", filled
+    from engine.dialect.name (sqlite here). No database name is written into
+    the prompts or the agent code.
+  - Reducer for results: results is Annotated[list[dict], operator.add], and
+    execute_sql returns only {"results": [entry], "error": None}.
+  - Notes for the answer node: the answer prompt gets the question, the SQL, the
+    rows and the university notes, but not the schema.
+
+  New files
+  - config/university_notes.md: the only university-specific text (pass mark 60,
+    current semester Fall 2026, NULL grade = not graded yet, same names are
+    possible).
+  - src/db/database.py: opens the database read-only in two ways (mode=ro on the
+    file, plus PRAGMA query_only = ON). It also has schema_as_text(), which
+    reads the schema with the inspector, and run_query(), which returns a
+    QueryResult (column names and rows).
+  - src/agent/ holds the rest:
+    - state.py and prompts.py
+    - llm.py: reads OPENAI_MODEL, temperature 0
+    - nodes.py
+    - graph.py: build_graph(llm, engine, notes), so tests can pass in a fake LLM
+      later
+  - src/main.py: the CLI. It prints the SQL, the row count and the answer.
+  - tests/test_database.py: covers a missing database file, a blocked INSERT,
+    the PRAGMA being on, the schema text and run_query.
+
+  Manual runs
+
+  ┌─────────────────────────┬──────────────────────────┬────────────────────┐
+  │        Question         │          Result          │  Checked against   │
+  │                         │                          │     direct SQL     │
+  ├─────────────────────────┼──────────────────────────┼────────────────────┤
+  │ How many students?      │ 30                       │ ✓                  │
+  ├─────────────────────────┼──────────────────────────┼────────────────────┤
+  │ Average grade in CS301, │ 89.0 (excludes NULL      │ ✓                  │
+  │  Fall 2025              │ grades)                  │                    │
+  ├─────────────────────────┼──────────────────────────┼────────────────────┤
+  │ Which students failed a │ 11 students (grade < 60) │ ✓ (11)             │
+  │  course?                │                          │                    │
+  ├─────────────────────────┼──────────────────────────┼────────────────────┤
+  │ Who teaches this        │ 5 teachers (filtered on  │ —                  │
+  │ semester?               │ Fall 2026)               │                    │
+  └─────────────────────────┴──────────────────────────┴────────────────────┘
+
+  How the answer stays grounded: if the query fails or returns no rows, the
+  answer node returns a fixed message and doesn't call the model. Otherwise the
+  model sees at most 50 rows and is told to use only those rows and copy numbers
+  exactly.
+
+  Gap: the notes ask the model to say when two people share a name, but none of
+  the four questions tested that. The two Maria Garcias weren't in any result.
+  That's a good case for the eval set in milestone 6.
+
+  I haven't committed anything. Two things are left for you:
+  - Run /export to docs/agent-sessions/02-minimal-graph.txt, and check it for
+    API keys first.
+  - Tell me if you want me to commit.
+
+  I also saved a memory note: being database-agnostic includes not hard-coding
+  the dialect name.
+
+✻ Baked for 2m 22s · done 2:10 AM
