@@ -1,0 +1,588 @@
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~/Work/langgraph-sql-agent-genpact
+
+  Fable 5.2 is here for your longest and toughest coding tasks, and is included in your plan until November 16. It draws down usage faster than Opus 5.5. Switch with /model.
+  1 more notice hidden
+
+❯ Read CLAUDE.md. We are starting milestone 1, the db.                          
+  Propose without writing coe                                                   
+  The tables, col, pk,fk, constraints, with a one liner for each table.         
+  The seed data plan, how many departments, teachers, students, semesters,      
+  courses,grades, enrollments,...                                               
+  The edge cases in the data.                                                   
+  How the db gets created, schema.db then seeds.sql and the script to build the 
+  db                                                                            
+  Five example questions this data must be able to answer, including one        
+  multi-step question.                                                          
+
+⏺ Login reached its time limit · Please run /login
+
+✻ Sautéed for 0s · done 1:46 AM
+
+❯ /login                                                                        
+  ⎿  Login successful
+
+❯ Read CLAUDE.md. We are starting milestone 1, the db.                          
+  Propose without writing coe                                                   
+  The tables, col, pk,fk, constraints, with a one liner for each table.         
+  The seed data plan, how many departments, teachers, students, semesters,      
+  courses,grades, enrollments,...                                               
+  The edge cases in the data.                                                   
+  How the db gets created, schema.db then seeds.sql and the script to build the 
+  db                                                                            
+  Five example questions this data must be able to answer, including one        
+  multi-step question.                                                          
+  ⎿  19 skills available
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Updated plan
+  ⎿  /plan to preview
+  ⎿  User rejected Claude's plan:
+     ╭─────────────────────────────────────────────────────────────────────────╮
+     │ Milestone 1 — University database (proposal, no code yet)               │
+     │                                                                         │
+     │ Context                                                                 │
+     │                                                                         │
+     │ The repo has only CLAUDE.md, requirements.txt and session notes.        │
+     │ Milestone 1 builds the                                                  │
+     │ SQLite database the agent will query: a clean, explainable schema plus  │
+     │ deterministic seed                                                      │
+     │ data with edge cases that later milestones (SQL generation, clarifying  │
+     │ questions, eval set)                                                    │
+     │ depend on.                                                              │
+     │                                                                         │
+     │ 1. Schema (db/schema.sql)                                               │
+     │                                                                         │
+     │ Table: departments                                                      │
+     │ One-liner: Academic departments that own courses and employ teachers.   │
+     │ Columns: id, name                                                       │
+     │ Keys / constraints: PK id; name NOT NULL UNIQUE                         │
+     │ ────────────────────────────────────────                                │
+     │ Table: teachers                                                         │
+     │ One-liner: People who teach course offerings.                           │
+     │ Columns: id, first_name, last_name, email, department_id                │
+     │ Keys / constraints: PK id; names NOT NULL; email UNIQUE NOT NULL; FK    │
+     │   department_id → departments                                           │
+     │ ────────────────────────────────────────                                │
+     │ Table: students                                                         │
+     │ One-liner: People who enroll in course offerings.                       │
+     │ Columns: id, first_name, last_name, email, enrollment_year              │
+     │ Keys / constraints: PK id; names NOT NULL; email UNIQUE NOT NULL; CHECK │
+     │                                                                         │
+     │   enrollment_year BETWEEN 2000 AND 2100                                 │
+     │ ────────────────────────────────────────                                │
+     │ Table: courses                                                          │
+     │ One-liner: The catalogue: a subject that can be taught many times.      │
+     │ Columns: id, code, title, credits, department_id                        │
+     │ Keys / constraints: PK id; code UNIQUE NOT NULL (e.g. CS101); credits   │
+     │ CHECK >                                                                 │
+     │   0; FK department_id → departments                                     │
+     │ ────────────────────────────────────────                                │
+     │ Table: semesters                                                        │
+     │ One-liner: Teaching periods.                                            │
+     │ Columns: id, name, year, term, start_date, end_date                     │
+     │ Keys / constraints: PK id; name UNIQUE (e.g. Fall 2025); term CHECK IN  │
+     │   ('Spring','Fall'); UNIQUE(year, term); CHECK start_date < end_date    │
+     │ ────────────────────────────────────────                                │
+     │ Table: course_offerings                                                 │
+     │ One-liner: A course taught by one teacher in one semester.              │
+     │ Columns: id, course_id, teacher_id, semester_id                         │
+     │ Keys / constraints: PK id; 3 FKs NOT NULL; UNIQUE(course_id,            │
+     │ semester_id)                                                            │
+     │ ────────────────────────────────────────                                │
+     │ Table: enrollments                                                      │
+     │ One-liner: A student taking an offering; holds the grade.               │
+     │ Columns: id, student_id, offering_id, grade                             │
+     │ Keys / constraints: PK id; FKs NOT NULL; UNIQUE(student_id,             │
+     │ offering_id); grade                                                     │
+     │   REAL NULL CHECK grade BETWEEN 0 AND 100                               │
+     │                                                                         │
+     │ Decisions:                                                              │
+     │ - Names split into first/last so "same name" questions and ORDER BY     │
+     │   last_name work; email is                                              │
+     │   the human-visible disambiguator.                                      │
+     │ - Grade is numeric 0–100, NULL = not graded yet. Pass mark (60) and     │
+     │   "current semester" are                                                │
+     │   business rules in the config file (milestone 2+), not columns — keeps │
+     │   schema DB-agnostic                                                    │
+     │   and results not dependent on today's date.                            │
+     │ - Every table/column gets a short SQL comment so the schema file        │
+     │   explains itself.                                                      │
+     │ - PRAGMA foreign_keys = ON at build time.                               │
+     │                                                                         │
+     │ 2. Seed data plan (db/seed.sql, hand-written, deterministic)            │
+     │                                                                         │
+     │ ┌──────────────────┬───────┬─────────────────────────────────────────── │
+     │ ────┐                                                                   │
+     │ │      Entity      │ Count │                     Notes                  │
+     │    │                                                                    │
+     │ ├──────────────────┼───────┼─────────────────────────────────────────── │
+     │ ────┤                                                                   │
+     │ │ departments      │ 3     │ Computer Science, Mathematics, Physics     │
+     │    │                                                                    │
+     │ ├──────────────────┼───────┼─────────────────────────────────────────── │
+     │ ────┤                                                                   │
+     │ │ teachers         │ 8     │ 3 CS, 3 Math, 2 Physics                    │
+     │    │                                                                    │
+     │ ├──────────────────┼───────┼─────────────────────────────────────────── │
+     │ ────┤                                                                   │
+     │ │ students         │ 30    │ enrollment_year 2022–2026                  │
+     │    │                                                                    │
+     │ ├──────────────────┼───────┼─────────────────────────────────────────── │
+     │ ────┤                                                                   │
+     │ │ semesters        │ 5     │ Fall 2024, Spring 2025, Fall 2025, Spring  │
+     │    │                                                                    │
+     │ │                  │       │ 2026, Fall 2026 (current)                  │
+     │    │                                                                    │
+     │ ├──────────────────┼───────┼─────────────────────────────────────────── │
+     │ ────┤                                                                   │
+     │ │ courses          │ 12    │ 5 CS, 4 Math, 3 Physics, credits 3–6       │
+     │    │                                                                    │
+     │ ├──────────────────┼───────┼─────────────────────────────────────────── │
+     │ ────┤                                                                   │
+     │ │ course_offerings │ ~26   │ 4–6 per semester                           │
+     │    │                                                                    │
+     │ ├──────────────────┼───────┼─────────────────────────────────────────── │
+     │ ────┤                                                                   │
+     │ │ enrollments      │ ~160  │ 4–8 students per offering; grades          │
+     │ realistic   │                                                           │
+     │ │                  │       │ spread 35–98                               │
+     │    │                                                                    │
+     │ └──────────────────┴───────┴─────────────────────────────────────────── │
+     │ ────┘                                                                   │
+     │                                                                         │
+     │ Hand-written INSERTs (not random generation) so every edge case is      │
+     │ intentional and the eval                                                │
+     │ set reference answers stay stable.                                      │
+     │                                                                         │
+     │ 3. Edge cases deliberately in the data                                  │
+     │                                                                         │
+     │ 1. Same name: two students named Maria Garcia (different ids/emails,    │
+     │    different grades).                                                   │
+     │ 2. Teacher and student share a name: teacher Daniel Kim and student     │
+     │    Daniel Kim.                                                          │
+     │ 3. Current semester ungraded: all Fall 2026 enrollments have grade =    │
+     │    NULL                                                                 │
+     │    (tests that AVG ignores NULL and the agent doesn't report "0").      │
+     │ 4. Failing grades: ~10 enrollments below 60, one exactly 60 (boundary). │
+     │ 5. Retake: a student failed CS201 in Fall 2024 and passed it in         │
+     │    Fall 2025.                                                           │
+     │ 6. Student with no enrollments (just admitted, 2026).                   │
+     │ 7. Teacher with no offerings (on sabbatical).                           │
+     │ 8. Course never offered (in catalogue only).                            │
+     │ 9. Offering with zero enrollments (tests empty-result retry path).      │
+     │ 10. Same course, different teachers across semesters (e.g. MATH101 by   │
+     │     two teachers).                                                      │
+     │ 11. Teacher teaching a course from another department (Math teacher     │
+     │     teaches a CS stats course) —                                        │
+     │     shows teacher.department ≠ course.department.                       │
+     │                                                                         │
+     │ 4. How the DB is built                                                  │
+     │                                                                         │
+     │ - db/schema.sql — DROP IF EXISTS + CREATE TABLE statements.             │
+     │ - db/seed.sql — INSERTs in FK order (departments →                      │
+     │   teachers/students/courses/semesters →                                 │
+     │   offerings → enrollments).                                             │
+     │ - src/db/build_db.py — one function build_database(db_path): delete old │
+     │   file, connect with                                                    │
+     │   sqlite3, enable foreign keys, executescript(schema),                  │
+     │   executescript(seed), commit, print                                    │
+     │   row counts per table. Run with python -m src.db.build_db → creates    │
+     │   db/university.db                                                      │
+     │   (gitignored; always rebuildable). No SQLAlchemy needed here — it's    │
+     │   plain SQL scripts; the                                                │
+     │   read-only SQLAlchemy connection comes in the next milestone.          │
+     │ - tests/test_db.py (no LLM): builds into a tmp path, asserts row        │
+     │   counts, FK/UNIQUE/CHECK                                               │
+     │   constraints reject bad rows, each edge case exists, and one           │
+     │   multi-join query returns the                                          │
+     │   expected value.                                                       │
+     │                                                                         │
+     │ 5. Questions the data must answer                                       │
+     │                                                                         │
+     │ 1. What was the average grade in Databases (CS301) in Fall 2025? —      │
+     │    filter + aggregation.                                                │
+     │ 2. Which courses did Daniel Kim teach in Spring 2026? — join + teacher  │
+     │    filter (and "Daniel Kim"                                             │
+     │    is also a student → must use teachers).                              │
+     │ 3. How many students are enrolled in each course this semester? — GROUP │
+     │    BY, current semester,                                                │
+     │    includes the zero-enrollment offering only with a LEFT JOIN.         │
+     │ 4. Which students failed at least one course, and which course? —       │
+     │    threshold filter, joins                                              │
+     │    across 4 tables, one boundary case (60 = pass).                      │
+     │ 5. Multi-step: Which teacher had the highest average grade across their │
+     │    courses in Fall                                                      │
+     │    2025, and which students failed a course taught by that teacher in   │
+     │    any semester?                                                        │
+     │    Step 1 → teacher id/name; step 2 → uses that result to list failing  │
+     │    students.                                                            │
+     │                                                                         │
+     │ Bonus (for milestone 5): What is Maria Garcia's average grade? → two    │
+     │ matches → clarification.                                                │
+     │                                                                         │
+     │ Verification                                                            │
+     │                                                                         │
+     │ - python -m src.db.build_db prints expected counts.                     │
+     │ - pytest tests/test_db.py passes.                                       │
+     │ - Run the 5 questions' reference SQL by hand in sqlite3                 │
+     │   db/university.db and check answers                                    │
+     │   match the intended edge cases (these SQLs later seed the milestone-6  │
+     │   eval set).                                                            │
+     ╰─────────────────────────────────────────────────────────────────────────╯
+  ⎿  147 skills available
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ User approved Claude's plan
+  ⎿  Plan saved to: ~/.claude/plans/read-claude-md-we-are-snoopy-llama.md · 
+     /plan to edit
+     Milestone 1 — University database (proposal, no code yet)
+
+     Context
+
+     The repo has only CLAUDE.md, requirements.txt and session notes. Milestone
+     1 builds the
+     SQLite database the agent will query: a clean, explainable schema plus
+     deterministic seed
+     data with edge cases that later milestones (SQL generation, clarifying
+     questions, eval set)
+     depend on.
+
+     1. Schema (db/schema.sql)
+
+     Table: departments
+     One-liner: Academic departments that own courses and employ teachers.
+     Columns: id, name
+     Keys / constraints: PK id; name NOT NULL UNIQUE
+     ────────────────────────────────────────
+     Table: teachers
+     One-liner: People who teach course offerings.
+     Columns: id, name, email, department_id
+     Keys / constraints: PK id; name NOT NULL (not unique); email UNIQUE NOT
+     NULL;
+       FK department_id → departments
+     ────────────────────────────────────────
+     Table: students
+     One-liner: People who enroll in course offerings.
+     Columns: id, name, email, enrollment_year
+     Keys / constraints: PK id; name NOT NULL (not unique); email UNIQUE NOT
+     NULL;
+       CHECK enrollment_year BETWEEN 2000 AND 2100
+     ────────────────────────────────────────
+     Table: courses
+     One-liner: The catalogue: a subject that can be taught many times.
+     Columns: id, code, title, credits, department_id
+     Keys / constraints: PK id; code UNIQUE NOT NULL (e.g. CS101); credits CHECK
+     >
+       0; FK department_id → departments
+     ────────────────────────────────────────
+     Table: semesters
+     One-liner: Teaching periods.
+     Columns: id, name, year, term, start_date, end_date
+     Keys / constraints: PK id; name UNIQUE (e.g. Fall 2025); term CHECK IN
+       ('Spring','Fall'); UNIQUE(year, term); CHECK start_date < end_date
+     ────────────────────────────────────────
+     Table: course_offerings
+     One-liner: A course taught by one teacher in one semester.
+     Columns: id, course_id, teacher_id, semester_id
+     Keys / constraints: PK id; 3 FKs NOT NULL; UNIQUE(course_id, semester_id)
+     with
+       SQL comment: "one section per course per semester"
+     ────────────────────────────────────────
+     Table: enrollments
+     One-liner: A student taking an offering; holds the grade.
+     Columns: id, student_id, offering_id, grade
+     Keys / constraints: PK id; FKs NOT NULL; UNIQUE(student_id, offering_id);
+     grade
+       REAL NULL CHECK grade BETWEEN 0 AND 100
+
+     Decisions:
+     - One name column (full name): users ask by full name, so WHERE name = 
+       'Maria Garcia'
+       is the simplest SQL for the LLM; concatenating first/last differs per
+       database (|| vs
+       CONCAT), which would leak DB-specific syntax into generation. id + email
+       disambiguate.
+     - Grade is numeric 0–100, NULL = not graded yet. Pass mark (60) and
+       "current semester" are
+       business rules in the config file (milestone 2+), not columns — keeps
+       schema DB-agnostic
+       and results not dependent on today's date.
+     - Every table/column gets a short SQL comment so the schema file explains
+       itself.
+     - PRAGMA foreign_keys = ON at build time.
+
+     2. Seed data plan (db/seed.sql, hand-written, deterministic)
+
+     ┌──────────────────┬───────┬───────────────────────────────────────────────
+     ┐
+     │      Entity      │ Count │                     Notes
+     │
+     ├──────────────────┼───────┼───────────────────────────────────────────────
+     ┤
+     │ departments      │ 3     │ Computer Science, Mathematics, Physics
+     │
+     ├──────────────────┼───────┼───────────────────────────────────────────────
+     ┤
+     │ teachers         │ 8     │ 3 CS, 3 Math, 2 Physics
+     │
+     ├──────────────────┼───────┼───────────────────────────────────────────────
+     ┤
+     │ students         │ 30    │ enrollment_year 2022–2026
+     │
+     ├──────────────────┼───────┼───────────────────────────────────────────────
+     ┤
+     │ semesters        │ 5     │ Fall 2024, Spring 2025, Fall 2025, Spring
+     │
+     │                  │       │ 2026, Fall 2026 (current)
+     │
+     ├──────────────────┼───────┼───────────────────────────────────────────────
+     ┤
+     │ courses          │ 12    │ 5 CS, 4 Math, 3 Physics, credits 3–6
+     │
+     ├──────────────────┼───────┼───────────────────────────────────────────────
+     ┤
+     │ course_offerings │ ~26   │ 4–6 per semester
+     │
+     ├──────────────────┼───────┼───────────────────────────────────────────────
+     ┤
+     │ enrollments      │ ~160  │ 4–8 students per offering; grades realistic
+     │
+     │                  │       │ spread 35–98
+     │
+     └──────────────────┴───────┴───────────────────────────────────────────────
+     ┘
+
+     Hand-written INSERTs (not random generation) so every edge case is
+     intentional and the eval
+     set reference answers stay stable.
+
+     3. Edge cases deliberately in the data
+
+     1. Same name: two students named Maria Garcia (different ids/emails,
+        different grades).
+        No clarification step for this: the planner runs before any SQL and
+        can't know the name is
+        duplicated. The query returns both rows and the answer lists both, each
+        with id/email.
+     2. Teacher and student share a name: teacher Daniel Kim and student Daniel 
+        Kim.
+     3. Current semester ungraded: all Fall 2026 enrollments have grade = NULL
+        (tests that AVG ignores NULL and the agent doesn't report "0").
+     4. Failing grades: ~10 enrollments below 60, one exactly 60 (boundary).
+     5. Retake: a student failed CS201 in Fall 2024 and passed it in Fall 2025.
+     6. Student with no enrollments (just admitted, 2026).
+     7. Teacher with no offerings (on sabbatical).
+     8. Course never offered (in catalogue only).
+     9. Offering with zero enrollments (tests empty-result retry path).
+     10. Same course, different teachers across semesters (e.g. MATH101 by two
+         teachers).
+     11. Teacher teaching a course from another department (Math teacher teaches
+         a CS stats course) —
+         shows teacher.department ≠ course.department.
+
+     4. How the DB is built
+
+     - db/schema.sql — DROP IF EXISTS + CREATE TABLE statements.
+     - db/seed.sql — INSERTs in FK order (departments →
+       teachers/students/courses/semesters →
+       offerings → enrollments).
+     - src/db/build_db.py — one function build_database(db_path): delete old
+       file, connect with
+       sqlite3, enable foreign keys, executescript(schema), executescript(seed),
+       commit, print
+       row counts per table. Run with python -m src.db.build_db → creates
+       db/university.db
+       (gitignored; always rebuildable). No SQLAlchemy needed here — it's plain
+       SQL scripts; the
+       read-only SQLAlchemy connection comes in the next milestone.
+     - tests/test_db.py (no LLM): builds into a tmp path, asserts row counts,
+       FK/UNIQUE/CHECK
+       constraints reject bad rows, each edge case exists, and one multi-join
+       query returns the
+       expected value.
+
+     5. Questions the data must answer
+
+     1. What was the average grade in Databases (CS301) in Fall 2025? — filter +
+        aggregation.
+     2. Which courses did Daniel Kim teach in Spring 2026? — join + teacher
+        filter (and "Daniel Kim"
+        is also a student → must use teachers).
+     3. How many students are enrolled in each course this semester? — GROUP BY,
+        current semester,
+        includes the zero-enrollment offering only with a LEFT JOIN.
+     4. Which students failed at least one course, and which course? — threshold
+        filter, joins
+        across 4 tables, one boundary case (60 = pass).
+     5. Multi-step: Which teacher had the highest average grade across their 
+        courses in Fall
+        2025, and which students failed a course taught by that teacher in any 
+        semester?
+        Step 1 → teacher id/name; step 2 → uses that result to list failing
+        students.
+
+     Bonus: What is Maria Garcia's average grade? → query groups by student id,
+     returns two rows;
+     the answer reports both Maria Garcias separately with id/email (no
+     clarification).
+
+     Verification
+
+     - python -m src.db.build_db prints expected counts.
+     - pytest tests/test_db.py passes.
+     - Run the 5 questions' reference SQL by hand in sqlite3 db/university.db
+       and check answers
+       match the intended edge cases (these SQLs later seed the milestone-6 eval
+       set).
+
+  Listed 1 directory (ctrl+o to expand)
+
+⏺ Plan approved — building it now.
+
+⏺ Write(db/schema.sql)
+  ⎿  Wrote 70 lines to db/schema.sql
+      1 -- University database schema (SQLite).
+      2 -- Drop in reverse FK order so the script can be re-run.
+      3 DROP TABLE IF EXISTS enrollments;
+      4 DROP TABLE IF EXISTS course_offerings;
+      5 DROP TABLE IF EXISTS semesters;
+      6 DROP TABLE IF EXISTS courses;
+      7 DROP TABLE IF EXISTS students;
+      8 DROP TABLE IF EXISTS teachers;
+      9 DROP TABLE IF EXISTS departments;
+     … +61 lines (ctrl+o to expand)
+
+⏺ Write(db/seed.sql)
+  ⎿  Wrote 136 lines to db/seed.sql
+       1 -- Seed data. Hand-written so every edge case is intentional and
+          eval answers stay stable.
+       2 -- Pass mark is 60 (business rule, documented outside the schema
+         ).
+       3 -- Fall 2026 is the current semester: its enrollments have no gr
+         ade yet.
+       4 
+       5 INSERT INTO departments (id, name) VALUES
+       6     (1, 'Computer Science'),
+       7     (2, 'Mathematics'),
+     … +129 lines (ctrl+o to expand)
+
+⏺ Write(src/db/build_db.py)
+  ⎿  Wrote 41 lines to src/db/build_db.py
+       1 """Build the SQLite database from db/schema.sql and db/seed.sql.
+       2 
+       3 Run from the repo root:  python -m src.db.build_db
+       4 """
+       5 import sqlite3
+       6 from pathlib import Path
+       7 
+       8 DB_DIR = Path(__file__).resolve().parents[2] / "db"
+       9 SCHEMA_PATH = DB_DIR / "schema.sql"
+      10 SEED_PATH = DB_DIR / "seed.sql"
+     … +31 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Built cleanly. Now the tests, including reference SQL for the five questions:
+
+⏺ Write(tests/test_db.py)
+  ⎿  Wrote 258 lines to tests/test_db.py
+      1 """Database tests: build, constraints, edge cases, and reference 
+        answers. No LLM."""
+      2 import sqlite3
+      3 
+      4 import pytest
+      5 
+      6 from src.db.build_db import build_database
+      7 
+      8 PASS_MARK = 60
+      9 
+     … +249 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+⏺ The 16 failing grades are correct; my distinct-student count was off (five
+  students fail twice), so the real figure is 11, and I'm correcting the
+  expected value. · summary
+
+⏺ Update(tests/test_db.py)
+  ⎿  Added 1 line, removed 1 line
+      216          JOIN semesters s ON s.id = o.semester_id
+      217          WHERE e.grade < ?""", (PASS_MARK,))
+      218      assert len(rows) == 16
+      219 -    assert len({r[0] for r in rows}) == 14                    
+      219 +    assert len({r[0] for r in rows}) == 11  # some students fa
+          +il more than once                                             
+      220      assert all(r[3] is not None for r in rows)  # NULL grades 
+           are not failures
+      221  
+      222  
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Milestone 1 is done. The database builds and all 31 tests in tests/test_db.py
+  pass. Nothing is committed yet.
+
+  Files
+  - db/schema.sql: 7 tables, each with a comment explaining it. It includes your
+    three changes: a single name column for teachers and students,
+    UNIQUE(course_id, semester_id) with the "one section per course per
+    semester" comment, and no clarification step for duplicate names.
+  - db/seed.sql: hand-written data with 3 departments, 8 teachers, 30 students,
+    12 courses, 5 semesters, 26 offerings and 152 enrollments.
+  - src/db/build_db.py: build_database(path) deletes the old file, turns on
+    foreign keys, runs the schema and then the seed, and returns the row count
+    per table. Run it with python -m src.db.build_db, which writes
+    db/university.db. That file is already gitignored, so the database is always
+    rebuilt from the two SQL files.
+  - tests/test_db.py: checks the row counts, has one test per constraint, one
+    per edge case, and reference SQL for the five questions.
+
+  Reference answers
+  1. The average grade in CS301 in Fall 2025 is 89.0.
+  2. Daniel Kim taught CS101 in Spring 2026.
+  3. Enrollments per course this semester: CS201 has 7, CS301 6, MATH201 6,
+     PHYS201 6, and MATH301 0 (this only shows up with a LEFT JOIN).
+  4. There are 16 failing grades from 11 students. Ungraded (NULL) enrollments
+     are not counted as failures.
+  5. Multi-step: Priya Shah had the best Fall 2025 average (89.0, with Alice
+     Morgan next at 79.8). The students who failed one of her courses are Lucas
+     Silva (CS301, Spring 2025, 57) and Ethan Miller (CS350, Spring 2026, 54).
+  - Bonus: there are two Maria Garcias. Student 1 averages 85.17 and student 2
+    averages 75.5.
+
+  Changes from the plan
+  - I added one edge case: a student named Ryan O'Connor, so name filters have
+    to handle quotes in SQL correctly.
+  - There are a few more failing grades than the "~10" in the plan (16, about
+    13% of graded enrollments).
+  - One test also checks that no student is enrolled in a semester before their
+    enrollment year.
+
+  My first expected value for question 4's distinct-student count was wrong
+  (14). The query returned 11, because five students fail twice. I checked the
+  data and corrected the test, not the data.
+
+  The 60 pass mark and the "current semester = Fall 2026" rule currently live
+  only in seed comments and a test constant. They move to the config file in a
+  later milestone.
+
+  Before committing, export this session to docs/agent-sessions/01-db.txt with
+  /export.
+
+✻ Churned for 3m 7s · done 1:56 AM
