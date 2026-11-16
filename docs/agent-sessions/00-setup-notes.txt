@@ -1,0 +1,81 @@
+00 - SETUP AND DESIGN DECISIONS (notes, not a coding-agent transcript)
+=====================================================================
+
+Date: 16 Nov 2026
+Tools: Claude (chat) for discussing options; terminal for setup.
+No code was written in this step. Coding starts in session 01 (Claude Code).
+
+1. READING THE TASK
+-------------------
+Requirements: university DB (teachers, students, courses; course taught by a teacher
+in a semester; enrollments with grades), LangGraph agent (NL -> SQL -> execute ->
+answer), complex questions (aggregations, joins, filters, multi-step), DB-agnostic
+design, mandatory tracing, error handling and debugging, unit tests, production notes.
+
+Evaluation criteria: correctness, clarity of design, complex questions, quality of
+LangGraph usage, traceability and debuggability, code cleanliness, ability to explain
+and defend the system. Task note: "small, working, explainable".
+
+Submission email: GitHub repo, include the coding agent session history.
+
+2. DECISIONS
+------------
+Language: Python.
+  Why: the role asks for strong Python, LangGraph is Python-first, and the tools I need
+  (SQLAlchemy, pytest, LangSmith) are Python.
+
+Graph shape: fixed workflow, not a ReAct agent.
+  plan -> generate_sql -> validate_sql -> execute_sql -> check_result -> answer,
+  with conditional edges looping back to generate_sql on errors (max 3 attempts),
+  and a give_up node.
+  Options considered:
+    A) ReAct agent with SQL tools (e.g. create_react_agent): little code, flexible,
+       but unpredictable, harder to test and trace, and shows little LangGraph design.
+    B) fixed workflow: predictable, bounded, easy to trace and to test with a fake LLM;
+       every requirement maps to a node.  <- chosen
+    C) hybrid (B + one tool-using step): best of both, but more to build in 12 hours.
+       Kept as a "next step".
+
+Database: SQLite through SQLAlchemy.
+  Why: no setup, and SQLAlchemy keeps the agent DB-agnostic (another database only
+  needs a different connection URL; the schema is read with the inspector).
+
+SQL validation: simple rules + read-only connection.
+  Only SELECT/WITH, one statement, no write keywords, add LIMIT if missing.
+  The real guarantee is the read-only connection (PRAGMA query_only = ON).
+  In production: a proper SQL parser and a read-only database user.
+
+Multi-step reasoning: a planner node that splits a question into 1-3 steps.
+  Why: the task asks for multi-step reasoning explicitly; a planner makes it visible in
+  the trace (one CTE query would hide it).
+
+Tracing: LangSmith (live demo) + each node's output saved to traces/<run_id>.jsonl
+  (so traces are part of the repo, as the deliverables require).
+
+Tests: pytest with a fake LLM, so tests are deterministic and need no API key.
+
+Additions chosen because of the evaluation criteria:
+  - ambiguous questions: LangGraph interrupt() + checkpointer to ask the user and resume
+  - correctness: 8-10 eval questions with reference SQL, comparing results
+  - debuggability: document at least one real bug found through a trace
+  - not in scope: web UI, multiple databases
+
+3. SETUP DONE
+-------------
+- Python 3.11 venv, packages in requirements.txt
+  (langgraph, langchain-openai, langsmith, sqlalchemy, pydantic, python-dotenv, pytest)
+- .env with OpenAI and LangSmith keys (git-ignored)
+- .gitignore: venv/, .env, __pycache__/, *.db, .DS_Store, .pytest_cache/
+- CLAUDE.md with all decisions above, read by Claude Code at the start of each session
+- Public GitHub repo: langgraph-sql-agent-genpact
+- Checked the OpenAI key works (test call returned "OK")
+
+4. PLAN (one Claude Code session per milestone)
+-----------------------------------------------
+01 schema + seed data
+02 minimal working graph
+03 validation, error handling, retries
+04 tracing
+05 planner, clarification (interrupt), DB-agnostic config
+06 tests + evaluation set
+07 documentation, examples, traces
