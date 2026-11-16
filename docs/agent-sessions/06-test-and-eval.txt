@@ -1,0 +1,817 @@
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~/Work/langgraph-sql-agent-genpact
+
+  Fable 5.2 is here for your longest and toughest coding tasks, and is included in your plan until November 16. It draws down usage faster than Opus 5.5. Switch with /model.
+  1 more notice hidden
+
+❯ /clear                                                                        
+
+❯ /model opus                                                                   
+  ⎿  Set model to Opus 5.5 and saved as your default for new sessions
+
+❯ read CLAUDE.md. milestones 1 to 5 are done.                                   
+                                                                                
+  milestone 6: agent tests with a fake llm, and an eval set. propose a plan, no 
+  code yet.                                                                     
+                                                                                
+  scope:                                                                        
+  a fake llm that returns scripted replies in order (plain strings, also the    
+  planner json), no api calls                                                   
+  end to end graph tests with the fake llm and the real test db, one per path:  
+  simple question, multi step, sql error then fix, empty result retry, give_up  
+  after 3 attempts, out of scope rejected, clarification with interrupt and     
+  resume                                                                        
+  tests that generate_sql gets the right things in its prompt: schema, notes,   
+  the retry error, earlier step results                                         
+  an eval set of 8 to 10 questions with hand written reference sql. compare the 
+  agent results to the reference results, not the sql text                      
+  include in the eval: an aggregation, joins over 4 tables, a semester filter,  
+  a teacher filter, a student filter, the two Maria Garcias, the NULL grades in 
+  Fall 2026, and the two explicit versions of the multi step question ("in any  
+  semester" and "in Fall 2025")                                                 
+  the eval runs with the real model as a separate command (python -m src.eval), 
+  not in pytest, and prints a score like 9/10 with the failed questions         
+  save the eval report in docs/ so it is part of the submission                 
+                                                                                
+  not in this milestone: new features                                           
+                                                                                
+  also tell me how you compare results when the columns or row order are        
+  different                                                                     
+
+  Read 1 file, listed 1 directory, ran 4 shell commands (ctrl+o to expand)
+
+⏺ Reading the existing reference queries in tests/test_db.py to reuse them for
+  the eval set, then I'll write the plan.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ User approved Claude's plan
+  ⎿  Plan saved to: 
+     ~/.claude/plans/pasted-content-id-c700-read-claude-md-serialized-robin.md ·
+     /plan to edit
+     Milestone 6: fake-LLM agent tests + eval set
+
+     Context
+
+     Milestones 1-5 work (graph, planner, interrupt, tracing), but the graph
+     itself has never
+     been run in pytest: only routing functions, parse_plan, validation and
+     tracing are tested
+     in isolation. "Correctness" also has no measure yet. This milestone adds
+     (a) end-to-end
+     graph tests with a scripted fake LLM on the real test DB, one per path, (b)
+     prompt-content
+     tests for generate_sql, and (c) a 10-question eval with hand-written
+     reference SQL, run
+     against the real model with python -m src.eval, scoring results (not SQL
+     text).
+     No new features, no changes to src/agent. No new packages.
+
+     Note: milestone 5 is still uncommitted (git status) - commit it before
+     starting.
+
+     Files
+
+     File: tests/fake_llm.py
+     What: FakeLLM(replies): invoke(prompt) returns AIMessage(content=next 
+     reply),
+       records every prompt in .prompts; raises AssertionError("FakeLLM: no 
+     reply 
+       left for prompt: ...") when it runs out; .remaining for "all replies
+     used"
+       asserts
+     ────────────────────────────────────────
+     File: tests/conftest.py
+     What: session fixtures: university_engine (build_database in tmp +
+       connect_readonly), notes (config/university_notes.md),
+     make_graph(replies) ->
+        (graph, fake)
+     ────────────────────────────────────────
+     File: tests/test_graph_e2e.py
+     What: 7 path tests (below)
+     ────────────────────────────────────────
+     File: tests/test_generate_sql_prompt.py
+     What: what generate_sql puts in its prompt
+     ────────────────────────────────────────
+     File: src/eval/__init__.py, src/eval/__main__.py
+     What: runner: python -m src.eval
+     ────────────────────────────────────────
+     File: src/eval/questions.py
+     What: the 10 questions + reference SQL (the only university-specific file
+       outside config/)
+     ────────────────────────────────────────
+     File: src/eval/compare.py
+     What: compare_results(agent, reference) -> (passed, reason) - pure function
+     ────────────────────────────────────────
+     File: tests/test_eval_compare.py
+     What: compare rules, plus every reference SQL runs on the test DB
+     ────────────────────────────────────────
+     File: docs/eval-report.md
+     What: written by the runner; committed
+     ────────────────────────────────────────
+     File: docs/agent-sessions/06-tests-and-eval.txt
+     What: /export at the end
+
+     Reused: build_graph (src/agent/graph.py), initial_state (state.py),
+     build_database
+     (src/db/build_db.py), connect_readonly/run_query (src/db/database.py),
+     run_traced
+     (src/tracing.py), is_empty_result and MAX_ATTEMPTS (nodes.py), prompt
+     constants
+     (EMPTY_ANSWER, EMPTY_RETRY_HINT) from prompts.py so tests don't copy
+     strings.
+
+     End-to-end graph tests (fake LLM + real test DB)
+
+     Helper run(graph, graph_input, thread) streams with
+     stream_mode=["updates","values"] and
+     returns (node_path, final_state, interrupt_or_None). Each test asserts the
+     exact node path,
+     status, results, and fake.remaining == 0 (catches unexpected extra LLM
+     calls).
+
+     1. simple: plan JSON (1 step) -> SELECT COUNT(*) FROM students -> answer
+        text.
+        Path plan, generate, validate, execute, check, answer. results rows
+        [(30,)]; LIMIT added.
+     2. multi-step: plan with 2 steps -> best-teacher-Fall-2025 SQL ->
+        failing-students SQL with
+        teacher_id = 3 -> answer. Two results; the step-2 generate prompt
+        contains "Priya Shah".
+     3. SQL error then fix: SQL with a wrong column -> fixed SQL -> answer.
+        generate_sql runs twice;
+        the 2nd prompt contains "no such column"; attempts reset after success.
+     4. empty result retry: ... WHERE name = 'Nobody' twice -> path has
+        check_result twice,
+        2nd generate prompt contains EMPTY_RETRY_HINT; answer == EMPTY_ANSWER
+        with no answer LLM call.
+     5. give_up: 3 bad SQLs -> give_up, status "error", attempts 3, no answer
+        LLM call.
+     6. out of scope: plan out_of_scope -> decline, status "rejected", only 1
+        LLM call, no sql.
+     7. clarification: plan needs_clarification -> __interrupt__ with the
+        clarifying question ->
+        graph.invoke(Command(resume="highest average grade in Fall 2025"), same 
+        thread) ->
+        plan again (answerable) -> SQL -> answer. Asserts: 2nd plan prompt
+        contains the reply,
+        question unchanged, clarification set. Uses the real InMemorySaver +
+        interrupt.
+
+     generate_sql prompt tests (call nodes.generate_sql directly with FakeLLM)
+
+     - first attempt: prompt has the schema (Table enrollments, -> students.id),
+       the notes
+       (Pass mark is 60), the dialect sqlite, the step text; NO "Previous
+       attempt" and NO
+       "Results of earlier steps" section.
+     - retry: state with error + sql -> prompt has the failed SQL and the error.
+     - step 2: state with one accepted result -> prompt has step 1's text, SQL
+       and result table.
+     - strips code fences from the reply and increments attempts.
+
+     Eval set (src/eval/questions.py)
+
+     Each item: id, question, covers, sql (reference). Expected values come from
+     the seed.
+
+     #: 1
+     Question: How many students failed at least one course?
+     Covers: aggregation, pass-mark rule
+     Reference result: 11
+     ────────────────────────────────────────
+     #: 2
+     Question: What was the average grade in CS301 in Fall 2025?
+     Covers: aggregation + semester filter
+     Reference result: 89.0
+     ────────────────────────────────────────
+     #: 3
+     Question: How many students are enrolled in each course this semester?
+     Covers: semester filter ("current"), LEFT JOIN
+     Reference result: 5 courses incl. MATH301 = 0
+     ────────────────────────────────────────
+     #: 4
+     Question: Which courses did Daniel Kim teach in Spring 2026?
+     Covers: teacher filter (teacher, not the student)
+     Reference result: CS101
+     ────────────────────────────────────────
+     #: 5
+     Question: What grades did John Smith get, and in which semester?
+     Covers: student filter
+     Reference result: 5 (semester, grade) rows
+     ────────────────────────────────────────
+     #: 6
+     Question: List every failing grade with the student, course code and
+     semester.
+     Covers: joins over 5 tables
+     Reference result: 16 rows (student id, code, semester, grade)
+     ────────────────────────────────────────
+     #: 7
+     Question: What is Maria Garcia's average grade?
+     Covers: duplicate names
+     Reference result: 2 rows: (1, 85.17), (2, 75.5)
+     ────────────────────────────────────────
+     #: 8
+     Question: Which students failed a course in Fall 2026?
+     Covers: NULL grades are not 0 / not fails
+     Reference result: empty
+     ────────────────────────────────────────
+     #: 9
+     Question: Which teacher had the highest average grade in Fall 2025, and
+     which
+       students failed a course taught by that teacher in any semester?
+     Covers: multi-step
+     Reference result: Lucas Silva, Ethan Miller (ids 6, 12)
+     ────────────────────────────────────────
+     #: 10
+     Question: ...same, "...taught by that teacher in Fall 2025?"
+     Covers: multi-step + empty must not be widened
+     Reference result: empty
+
+     Reference SQL reuses the queries already in tests/test_db.py where they
+     exist (q1-q5, Maria).
+     tests/test_eval_compare.py runs every reference query on the test DB, so a
+     broken reference
+     fails pytest, not the eval.
+
+     How results are compared (src/eval/compare.py)
+
+     The agent's result = the last accepted step (state["results"][-1]); for
+     multi-step
+     questions that is the final step. Not "done" (give_up, decline,
+     clarification) = fail with
+     the status as reason.
+
+     1. Normalize values: numbers -> round(float(x), 2) (so 57 == 57.0, 85.1666
+        == 85.17);
+        strings stripped; NULL stays None.
+     2. Empty reference: pass iff the agent result is empty (is_empty_result: no
+        rows or one
+        all-NULL row) - so AVG -> NULL and zero rows both count.
+     3. Columns - names and order ignored, extra columns allowed: the reference
+        returns only the
+        columns that define a correct answer (e.g. student id, grade). The agent
+        usually adds more
+        (names, titles, emails). We try every way to pick k agent columns for
+        the k reference
+        columns (itertools.permutations, at most a few hundred for <=7 columns)
+        and pass if any
+        projection gives the reference rows. Column names are never compared
+        (avg_grade vs
+        AVG(e.grade) don't matter).
+     4. Rows - order ignored, compared as sets after projection: extra agent
+        columns can change
+        granularity (one row per failure vs one per student), and distinct
+        projected rows handle
+        that. No eval question asks for an order (no "top 3"), so there's no
+        ordered mode.
+     5. Fail reasons are specific: "status=error", "agent result has 2 columns,
+        reference needs 3",
+        "expected empty, got 4 rows", "no column mapping matches: 15 distinct
+        rows vs 16 expected".
+
+     Known limits (written in the report): rounding to 2 decimals (an agent that
+     rounds to 1 fails);
+     string values must match exactly (code "CS301" vs title "Databases" are
+     different columns, so
+     the reference picks the column the planner rule makes the agent return:
+     ids, or codes).
+
+     Runner (python -m src.eval)
+
+     - load_dotenv, load_settings, connect_readonly, build_graph(get_llm(), ...)
+       - same as src/main.py.
+     - Per question: run reference SQL; run the agent through run_traced (so
+       each eval run has a
+       trace in traces/) with ask_user=lambda q: "" (non-interactive: a
+       clarification ends in
+       decline -> counted as a fail); compare.
+     - Prints one line per question (PASS/FAIL, id, question, reason), then
+       Score: 9/10 and the
+       failed questions with reasons.
+     - Writes docs/eval-report.md: date, model, score, a short "how results are
+       compared"
+       section, a table (id, covers, pass/fail, reason), and for each failure:
+       question, agent SQL,
+       first rows of the agent result, reference SQL, trace path.
+       Self-contained, because
+       traces/*.jsonl are git-ignored.
+
+     Verification
+
+     - pytest - all old + new tests pass, no network (FakeLLM only).
+     - python -m src.eval with the real key - prints the score, writes
+       docs/eval-report.md.
+       Any failure is looked at in its trace; real bugs go into docs (not fixed
+       in this milestone
+       unless you say so).
+     - Check the export file for API keys, then commit.
+
+⏺ Plan approved. One note before I start: milestone 5 is still uncommitted. I
+  won't commit it myself, since you haven't asked me to. All new files are
+  separate from it, so they won't mix.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Write(tests/fake_llm.py)
+  ⎿  Wrote 23 lines to tests/fake_llm.py
+       1 """A fake chat model for tests: returns scripted replies in orde
+         r, no API calls.
+       2 
+       3 Every node talks to the model the same way, llm.invoke(prompt).c
+         ontent, so scripted
+       4 strings are enough: planner JSON, SQL, answer text.
+       5 """
+       6 from langchain_core.messages import AIMessage
+       7 
+       8 
+     … +15 lines (ctrl+o to expand)
+
+⏺ Write(tests/conftest.py)
+  ⎿  Wrote 31 lines to tests/conftest.py
+      1 """Shared fixtures for the agent tests: the real seeded test DB, 
+        the notes file, a graph builder."""
+      2 import pytest
+      3 
+      4 from src.agent.graph import build_graph
+      5 from src.config import load_settings
+      6 from src.db.build_db import build_database
+      7 from src.db.database import connect_readonly
+      8 from tests.fake_llm import FakeLLM
+      9 
+     … +22 lines (ctrl+o to expand)
+
+  Read 1 file (ctrl+o to expand)
+
+⏺ Now the end-to-end tests.
+
+⏺ Write(tests/test_graph_e2e.py)
+  ⎿  Wrote 174 lines to tests/test_graph_e2e.py
+       1 """End-to-end graph runs: scripted fake LLM + the real seeded te
+         st database.
+       2 
+       3 One test per path through the graph. Each checks the exact node 
+         path, the final status,
+       4 and that the fake LLM used all its replies (so no unexpected ext
+         ra LLM calls).
+       5 """
+       6 import json
+       7 
+     … +167 lines (ctrl+o to expand)
+
+⏺ Write(tests/test_generate_sql_prompt.py)
+  ⎿  Wrote 59 lines to tests/test_generate_sql_prompt.py
+      1 """What generate_sql puts in its prompt: schema, notes, dialect, 
+        the retry error, earlier results."""
+      2 import pytest
+      3 
+      4 from src.agent.nodes import generate_sql
+      5 from src.agent.state import initial_state
+      6 from src.db.database import schema_as_text
+      7 from tests.fake_llm import FakeLLM
+      8 
+      9 STEP = "Count the students"
+     … +50 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The 11 new tests pass. Next the eval: comparison, questions, runner.
+
+⏺ Write(src/eval/compare.py)
+  ⎿  Wrote 52 lines to src/eval/compare.py
+       1 """Compare the agent's query result to a reference result. Pure 
+         functions, no LLM, no DB.
+       2 
+       3 We compare RESULTS, not SQL text: two different queries can both
+          be right.
+       4 - Values: numbers rounded to 2 decimals (57 == 57.0, 85.1666 == 
+         85.17), strings stripped.
+       5 - Columns: names and order are ignored, extra agent columns are 
+         allowed. The reference
+       6   returns only the columns that define a correct answer; we try 
+     … +47 lines (~2 KB) (ctrl+o to expand)
+
+⏺ Write(src/eval/questions.py)
+  ⎿  Wrote 93 lines to src/eval/questions.py
+       1 """The eval set: questions about the university database with ha
+         nd-written reference SQL.
+       2 
+       3 This is the only university-specific file outside config/. Each 
+         reference query returns
+       4 only the columns that define a correct answer (see src/eval/comp
+         are.py); the agent may
+       5 return more. Expected results are fixed by db/seed.sql and check
+         ed in tests/test_eval.py.
+       6 """
+     … +87 lines (ctrl+o to expand)
+
+⏺ Write(src/eval/__init__.py)
+  ⎿  Wrote 1 line to src/eval/__init__.py
+      1 (No content)
+
+⏺ Write(src/eval/__main__.py)
+  ⎿  Wrote 127 lines to src/eval/__main__.py
+      1 """Run the eval set against the real model: python -m src.eval
+      2 
+      3 For each question: run the reference SQL, run the agent (traced),
+         compare the agent's final
+      4 step result with the reference result. Prints the score and write
+        s docs/eval-report.md.
+      5 """
+      6 import os
+      7 from dataclasses import dataclass
+      8 from datetime import datetime
+     … +119 lines (ctrl+o to expand)
+
+⏺ Write(tests/test_eval.py)
+  ⎿  Wrote 78 lines to tests/test_eval.py
+      1 """The eval tooling without an LLM: result comparison rules and t
+        he reference queries."""
+      2 import pytest
+      3 
+      4 from src.db.database import run_query
+      5 from src.eval.compare import compare_results
+      6 from src.eval.questions import QUESTIONS
+      7 
+      8 
+      9 # --- compare_results -------------------------------------------
+     … +70 lines (~3 KB) (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+⏺ All 114 tests pass. One fix: the reference check should use exact set
+  equality, not the lenient comparison it is checking.
+
+⏺ Bash(source venv/bin/activate && python - <<'EOF'
+      from pathlib import Path…)
+  ⎿  ..................
+        [100%]
+     18 passed in 0.04s
+     … +7 lines (ctrl+o to expand)
+  ⎿  Updated tests/test_eval.py (+2 -2)
+      2  import pytest
+      3  
+      4  from src.db.database import run_query
+      5 -from src.eval.compare import compare_results                    
+      5 +from src.eval.compare import compare_results, normalized_rows   
+      6  from src.eval.questions import QUESTIONS
+      7  
+      8  
+     ...
+      75      if item.id == 6:
+      76          assert len(rows) == 16  # every failing grade
+      77          return
+      78 -    assert compare_results(rows, list(EXPECTED[item.id]))[0], r
+         -ows                                                            
+      78 +    assert normalized_rows(rows) == normalized_rows(EXPECTED[it
+         +em.id])                                                        
+
+⏺ Now the real eval run (about 10 questions against your OpenAI model):
+
+⏺ Bash(source venv/bin/activate && python -m src.eval 2>&1 | tail -40)
+  ⎿  FAIL  #1  How many students failed at least one course?
+             no choice of agent columns gives the reference rows (agent: 11
+      rows x 2 columns, reference: 1 distinct rows x 1 columns)
+     … +29 lines (ctrl+o to expand)
+  ⎿  Created docs/eval-report.md (+234 -0)
+        1 +# Eval report                                                 
+        2 +                                                              
+        3 +Generated by `python -m src.eval` on 2026-11-16 08:49, model `
+          +gpt-4.1-mini`.                                                
+        4 +                                                              
+        5 +**Score: 6/10**                                               
+        6 +                                                              
+        7 +## How results are compared                                   
+        8 +                                                              
+        9 +The agent's result (its final step) is compared with the resul
+          +t of a hand-written                                           
+       10 +reference query (src/eval/questions.py), not the SQL text (src
+          +/eval/compare.py):                                            
+       11 +                                                              
+       12 +- numbers are rounded to 2 decimals, strings are stripped;    
+       13 +- column names and order are ignored, and the agent may return
+          + extra columns: we                                            
+       14 +  try every way to pick agent columns for the reference column
+          +s;                                                            
+       15 +- row order is ignored and rows are compared as sets;         
+       16 +- an empty reference needs an empty agent result (no rows, or 
+          +one all-NULL row);                                            
+       17 +- a run that does not end with status `done` (give_up, decline
+          +) fails.                                                      
+       18 +                                                              
+       19 +Limits: values must match exactly after rounding, so a course 
+          +given by title where                                          
+       20 +the reference has its code fails. Failures are read in their t
+          +race before calling                                           
+       21 +them agent bugs.                                              
+       22 +                                                              
+       23 +## Results                                                    
+       24 +                                                              
+       25 +| # | Pass | Covers | Question | Reason |                     
+       26 +|---|---|---|---|---|                                         
+       27 +| 1 | FAIL | aggregation, pass-mark rule | How many students f
+          +ailed at least one course? | no choice of agent columns gives 
+          +the reference rows (agent: 11 rows x 2 columns, reference: 1 d
+          +istinct rows x 1 columns) |                                   
+       28 +| 2 | PASS | aggregation, semester filter | What was the avera
+          +ge grade in CS301 in Fall 2025? | match |                     
+       29 +| 3 | FAIL | semester filter ('this semester' = Fall 2026), co
+          +urse with 0 students | How many students are enrolled in each 
+          +course this semester? | no choice of agent columns gives the r
+          +eference rows (agent: 5 rows x 3 columns, reference: 5 distinc
+          +t rows x 2 columns) |                                         
+       30 +| 4 | FAIL | teacher filter (a student has the same name) | Wh
+          +ich courses did Daniel Kim teach in Spring 2026? | no choice o
+          +f agent columns gives the reference rows (agent: 1 rows x 2 co
+          +lumns, reference: 1 distinct rows x 1 columns) |              
+       31 +| 5 | PASS | student filter | What grades did John Smith get, 
+          +and in which semester? | match |                              
+       32 +| 6 | FAIL | joins over 5 tables, pass-mark rule | List every 
+          +failing grade with the student, the course code and the semest
+          +er. | no choice of agent columns gives the reference rows (age
+          +nt: 16 rows x 6 columns, reference: 16 distinct rows x 4 colum
+          +ns) |                                                         
+       33 +| 7 | PASS | two students share the name: both must be answere
+          +d | What is Maria Garcia's average grade? | match |           
+       34 +| 8 | PASS | NULL grades (not graded yet) are not fails: the a
+          +nswer is empty | Which students failed a course in Fall 2026? 
+          +| both empty |                                                
+       35 +| 9 | PASS | multi-step, failures in any semester | Which teac
+          +her had the highest average grade in Fall 2025, and which stud
+          +ents failed a course taught by that teacher in any semester? |
+          + match |                                                      
+       36 +| 10 | PASS | multi-step, empty answer must not be widened to 
+          +other semesters | Which teacher had the highest average grade 
+          +in Fall 2025, and which students failed a course taught by tha
+          +t teacher in Fall 2025? | both empty |                        
+       37 +                                                              
+       38 +## Failed: #1 How many students failed at least one course?   
+       39 +                                                              
+       40 +Reason: no choice of agent columns gives the reference rows (a
+          +gent: 11 rows x 2 columns, reference: 1 distinct rows x 1 colu
+          +mns). Status: `done`. Trace: `traces/c3aab952-9a9c-40aa-a770-e
+          +793e200b3eb.jsonl`                                            
+     … 194 more lines (ctrl+o to expand)
+  ⎿  (timeout 10m)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The first eval run scored 6/10, and only #6 is a real agent mistake; #1, #3
+  and #4 failed because of my reference queries, while #8 and #10 should be
+  widened. I'm leaving the references as they are until you decide whether to
+  change them. · summary
+
+⏺ User answered Claude's questions:
+  ⎿  · Eval run 1 scored 6/10. Three of the four fails (#1 count vs list, #3 and
+     #4 course title vs code) come from how I wrote the reference queries; the 
+     agent's answers were right. #6 (grade left out) is a real agent miss. What 
+     should I do with the references? → Fix 3 references, rerun (Recommended)
+
+⏺ Bash(source venv/bin/activate && python - <<'EOF'
+      from pathlib import Path…)
+  ⎿  36:                 "SELECT DISTINCT student_id FROM enrollments WHERE
+      grade < 60"),
+     46:                 """SELECT c.title, COUNT(e.id) FROM course_offerin
+     … +8 lines (ctrl+o to expand)
+  ⎿  Updated src/eval/questions.py (+5 -4)
+      32  QUESTIONS = [
+      33      EvalQuestion(1, "How many students failed at least one cour
+          se?",
+      34                   "aggregation, pass-mark rule",
+      35 -                 "SELECT COUNT(DISTINCT student_id) FROM enroll
+         -ments WHERE grade < 60"),                                      
+      35 +                 # The students, not the count: the agent lists
+         + them and the answer counts.                                   
+      36 +                 "SELECT DISTINCT student_id FROM enrollments W
+         +HERE grade < 60"),                                             
+      37      EvalQuestion(2, "What was the average grade in CS301 in Fal
+          l 2025?",
+      38                   "aggregation, semester filter",
+      39                   """SELECT AVG(e.grade) FROM enrollments e
+     ...
+      43                   WHERE c.code = 'CS301' AND s.name = 'Fall 2025
+          '"""),
+      44      EvalQuestion(3, "How many students are enrolled in each cou
+          rse this semester?",
+      45                   "semester filter ('this semester' = Fall 2026)
+          , course with 0 students",
+      45 -                 """SELECT c.code, COUNT(e.id) FROM course_offe
+         -rings o                                                        
+      46 +                 """SELECT c.title, COUNT(e.id) FROM course_off
+         +erings o                                                       
+      47                   JOIN courses c ON c.id = o.course_id
+      48                   JOIN semesters s ON s.id = o.semester_id
+      49                   LEFT JOIN enrollments e ON e.offering_id = o.i
+          d
+      50                   WHERE s.name = 'Fall 2026'
+      50 -                 GROUP BY c.code"""),                          
+      51 +                 GROUP BY c.title"""),                         
+      52      EvalQuestion(4, "Which courses did Daniel Kim teach in Spri
+          ng 2026?",
+      53                   "teacher filter (a student has the same name)"
+          ,
+      53 -                 """SELECT c.code FROM course_offerings o      
+      54 +                 """SELECT c.title FROM course_offerings o     
+      55                   JOIN teachers t ON t.id = o.teacher_id
+      56                   JOIN courses c ON c.id = o.course_id
+      57                   JOIN semesters s ON s.id = o.semester_id
+  ⎿  Updated tests/test_eval.py (+4 -3)
+      56  
+      57  
+      58  EXPECTED = {
+      59 -    1: {(11,)},                                                
+      59 +    1: {(i,) for i in (4, 6, 8, 10, 12, 15, 16, 17, 19, 21, 23)
+         +},  # 11 students                                              
+      60      2: {(89.0,)},
+      61 -    3: {("CS201", 7), ("CS301", 6), ("MATH201", 6), ("MATH301",
+         - 0), ("PHYS201", 6)},                                          
+      62 -    4: {("CS101",)},                                           
+      61 +    3: {("Data Structures", 7), ("Databases", 6), ("Linear Alge
+         +bra", 6),                                                      
+      62 +        ("Probability Theory", 0), ("Electromagnetism", 6)},   
+      63 +    4: {("Introduction to Programming",)},                     
+      64      5: {("Fall 2024", 45.0), ("Spring 2025", 79.0), ("Fall 2025
+          ", 72.0),
+      65          ("Fall 2025", 68.0), ("Spring 2026", 58.0)},
+      66      7: {(1, 85.17), (2, 75.5)},
+
+⏺ Now I'll add a fixed "changes to the eval set" note to the report so the edit
+  is visible, then rerun.
+
+⏺ Update(src/eval/__main__.py)
+  ⎿  Added 14 lines
+      76          "the reference has its code fails. Failures are read in
+           their trace before calling",
+      77          "them agent bugs.",
+      78          "",
+      79 +        "## Changes to the eval set",                          
+      80 +        "",                                                    
+      81 +        "The first run scored 6/10. Reading the 4 failures show
+         +ed that 3 were reference",                                     
+      82 +        "mistakes, not agent mistakes (the agent's answers were
+         + right), so those references",                                 
+      83 +        "were changed:",                                       
+      84 +        "",                                                    
+      85 +        "- #1: the reference returned only `COUNT(...)` = 11; t
+         +he agent listed the 11 students",                              
+      86 +        "  and the answer counted them. The reference now retur
+         +ns the failing students' ids.",                                
+      87 +        "- #3, #4: the references used the course code, the age
+         +nt used the course title (its",                                
+      88 +        "  readable name). The references now use the title.", 
+      89 +        "",                                                    
+      90 +        "#6 stayed a real fail in that run: the agent returned 
+         +student, course code and",                                     
+      91 +        "semester but not the grade the question asks for.",   
+      92 +        "",                                                    
+      93          "## Results",
+      94          "",
+      95          "| # | Pass | Covers | Question | Reason |",
+
+⏺ Bash(source venv/bin/activate && python -m src.eval 2>&1 | tail -16)
+  ⎿          match
+     FAIL  #6  List every failing grade with the student, the course code a
+     nd the semester.
+     … +18 lines (ctrl+o to expand)
+  ⎿  Updated docs/eval-report.md (+20 -136)
+      1  # Eval report
+      2  
+      3 -Generated by `python -m src.eval` on 2026-11-16 08:49, model `gp
+        -t-4.1-mini`.                                                    
+      3 +Generated by `python -m src.eval` on 2026-11-16 08:50, model `gp
+        +t-4.1-mini`.                                                    
+      4  
+      5 -**Score: 6/10**                                                 
+      5 +**Score: 9/10**                                                 
+      6  
+      7  ## How results are compared
+      8  
+     ...
+      20  the reference has its code fails. Failures are read in their tr
+          ace before calling
+      21  them agent bugs.
+      22  
+      23 +## Changes to the eval set                                     
+      24 +                                                               
+      25 +The first run scored 6/10. Reading the 4 failures showed that 3
+         + were reference                                                
+      26 +mistakes, not agent mistakes (the agent's answers were right), 
+         +so those references                                            
+      27 +were changed:                                                  
+      28 +                                                               
+      29 +- #1: the reference returned only `COUNT(...)` = 11; the agent 
+         +listed the 11 students                                         
+      30 +  and the answer counted them. The reference now returns the fa
+         +iling students' ids.                                           
+      31 +- #3, #4: the references used the course code, the agent used t
+         +he course title (its                                           
+      32 +  readable name). The references now use the title.            
+      33 +                                                               
+      34 +#6 stayed a real fail in that run: the agent returned student, 
+         +course code and                                                
+      35 +semester but not the grade the question asks for.              
+      36 +                                                               
+      37  ## Results
+      38  
+      39  | # | Pass | Covers | Question | Reason |
+      40  |---|---|---|---|---|
+      27 -| 1 | FAIL | aggregation, pass-mark rule | How many students fa
+         -iled at least one course? | no choice of agent columns gives th
+         -e reference rows (agent: 11 rows x 2 columns, reference: 1 dist
+         -inct rows x 1 columns) |                                       
+      41 +| 1 | PASS | aggregation, pass-mark rule | How many students fa
+         +iled at least one course? | match |                            
+      42  | 2 | PASS | aggregation, semester filter | What was the averag
+          e grade in CS301 in Fall 2025? | match |
+      29 -| 3 | FAIL | semester filter ('this semester' = Fall 2026), cou
+         -rse with 0 students | How many students are enrolled in each co
+         -urse this semester? | no choice of agent columns gives the refe
+         -rence rows (agent: 5 rows x 3 columns, reference: 5 distinct ro
+         -ws x 2 columns) |                                              
+      30 -| 4 | FAIL | teacher filter (a student has the same name) | Whi
+         -ch courses did Daniel Kim teach in Spring 2026? | no choice of 
+         -agent columns gives the reference rows (agent: 1 rows x 2 colum
+         -ns, reference: 1 distinct rows x 1 columns) |                  
+      43 +| 3 | PASS | semester filter ('this semester' = Fall 2026), cou
+         +rse with 0 students | How many students are enrolled in each co
+         +urse this semester? | match |                                  
+      44 +| 4 | PASS | teacher filter (a student has the same name) | Whi
+         +ch courses did Daniel Kim teach in Spring 2026? | match |      
+      45  | 5 | PASS | student filter | What grades did John Smith get, a
+          nd in which semester? | match |
+      46  | 6 | FAIL | joins over 5 tables, pass-mark rule | List every f
+          ailing grade with the student, the course code and the semester
+          . | no choice of agent columns gives the reference rows (agent:
+           16 rows x 6 columns, reference: 16 distinct rows x 4 columns) 
+          |
+     … 141 more lines (ctrl+o to expand)
+  ⎿  (timeout 10m)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Milestone 6 is done. pytest passes (114 tests, no API calls), and python -m 
+  src.eval scored 9/10 against the real model. Nothing is committed yet, and
+  milestone 5 is still uncommitted too.
+
+  Fake LLM and tests
+  - tests/fake_llm.py returns scripted strings in order (planner JSON, SQL,
+    answer) and records every prompt it gets. If the graph makes an LLM call the
+    test didn't script, it fails loudly.
+  - tests/test_graph_e2e.py has one test per path, on the real seeded test
+    database: simple question, multi-step, SQL error then fix, empty result
+    retry, give_up after 3 attempts, out of scope, and clarification. The
+    clarification test uses the real interrupt() and checkpointer, then resumes
+    with Command(resume=...). Each test checks the exact list of nodes the graph
+    visited, and that the fake used all its replies, so an unexpected extra LLM
+    call fails the test.
+  - tests/test_generate_sql_prompt.py checks what generate_sql puts in its
+    prompt: the schema, the notes, the dialect and the step. On a retry it has
+    the failed SQL and the error; on step 2 it has step 1's table. Neither
+    section appears when it shouldn't.
+  - tests/test_eval.py tests the comparison rules and runs every reference query
+    on the test database, so a broken reference fails pytest instead of the
+    eval.
+
+  Eval (src/eval/, report in docs/eval-report.md)
+  - 10 questions cover everything you listed. Both versions of the multi-step
+    question pass ("any semester" finds Lucas Silva and Ethan Miller). The two
+    that should be empty (Fall 2026 NULL grades, and the Fall 2025 version) came
+    back empty, so the model kept the filter instead of widening it.
+  - The first run scored 6/10. Three of those fails were my reference mistakes:
+    a count where the agent listed the students, and course codes where it used
+    titles. You chose to fix them, and the report has a "Changes to the eval
+    set" section that says so.
+  - #6 is a real agent miss. The trace shows the planner rewrote the step as
+    "student id and name, course id and code, semester id and name" and dropped
+    the grade the question asks for. It happened the same way on both runs. I
+    haven't fixed it, since that would be a new change in this milestone. It's
+    also a good second "bug found through a trace" for docs/.
+
+  How results are compared when the columns or row order differ
+  (src/eval/compare.py)
+  1. Values: numbers are rounded to 2 decimals, so 57 equals 57.0 and 85.1666
+     equals 85.17. Strings are stripped of spaces.
+  2. Columns: names are never compared, and the agent may return extra columns.
+     The reference returns only the columns that make an answer correct, for
+     example student id and grade. The comparison tries every way of picking
+     agent columns for those reference columns and passes if any choice gives
+     the reference rows.
+  3. Rows: order is ignored, and rows are compared as sets after picking the
+     columns. Extra agent columns can change how many rows there are (one per
+     failure versus one per student), and picking the reference columns first
+     takes care of that.
+  4. Empty answers: an empty reference needs an empty agent result, meaning no
+     rows or one row of only NULLs.
+  5. Failed runs: a run that ends in give_up, decline or a clarification fails.
+
+  There are two known limits: values must match exactly after rounding, and the
+  comparison doesn't check the answer text, only the final step's rows.
+
+  To finish the milestone, run /export to
+  docs/agent-sessions/06-tests-and-eval.txt and check it for keys. Then tell me
+  when to commit milestones 5 and 6.
+
+✻ Cogitated for 7m 11s · done 8:51 AM
