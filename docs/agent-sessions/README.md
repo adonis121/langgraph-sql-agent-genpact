@@ -25,7 +25,9 @@ one name column;
 grade on enrollment, 
 NULL = ungraded; one section per course per semester;
 11 edge cases in the seed data”|
-| 02 | [02-minimal-graph.txt](02-minimal-graph.txt) | First working graph | |
+| 02 | [02-minimal-graph.txt](02-minimal-graph.txt) | First working graph | read-only DB in two layers; 
+schema read by the inspector; dialect from the engine; 
+results reducer; answer node skips the LLM on errors or empty results”|
 | 03 | [03-validation-and-retries.txt](03-validation-and-retries.txt) | Validation, error handling, retries | |
 | 04 | [04-tracing.txt](04-tracing.txt) | Tracing | |
 | 05 | [05-planner-and-db-agnostic.txt](05-planner-and-db-agnostic.txt) | Multi-step planner, clarification, DB-agnostic config | |

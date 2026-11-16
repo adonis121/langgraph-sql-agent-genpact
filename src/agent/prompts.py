@@ -15,7 +15,28 @@ Use only the tables and columns in the schema. Return only the SQL, no explanati
 
 ## Question
 {question}
+{retry}"""
+
+# Appended to GENERATE_SQL_PROMPT when the previous attempt for this step failed.
+RETRY_SECTION = """
+## Previous attempt (failed)
+SQL:
+{sql}
+
+Problem: {error}
+
+Write a corrected query.
 """
+
+# The error check_result reports for an empty result. It must not invite the model to
+# change the question: an empty result can be the correct answer.
+EMPTY_RETRY_HINT = """Empty result: the query ran but returned no rows (or only NULLs).
+This may be the correct answer. Check only for mistakes:
+- a literal value spelled or cased differently from the data (see business rules)
+- a wrong join path or wrong column
+Do NOT change the meaning of the question: never widen, loosen or remove a filter
+(e.g. do not turn "= 100" into ">= 90"). If the query already matches the question,
+return it unchanged."""
 
 ANSWER_PROMPT = """You answer a question using ONLY the query result below.
 
@@ -39,8 +60,13 @@ Rules:
 {table}
 """
 
-ERROR_ANSWER = "I couldn't answer that: the query failed with this error: {error}"
 EMPTY_ANSWER = "The query returned no matching records."
+
+GIVE_UP_ANSWER = """Sorry, I couldn't answer this question after {attempts} attempts.
+Last SQL tried:
+{sql}
+Last error: {error}
+Try rephrasing the question or naming the table/field you mean."""
 
 
 def format_rows_as_table(columns: list[str], rows: list[tuple]) -> str:

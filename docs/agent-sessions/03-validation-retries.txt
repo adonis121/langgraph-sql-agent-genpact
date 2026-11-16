@@ -1,0 +1,1097 @@
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~/Work/langgraph-sql-agent-genpact
+
+  Fable 5.2 is here for your longest and toughest coding tasks, and is included in your plan until November 16. It draws down usage faster than Opus 5.5. Switch with /model.
+  1 more notice hidden
+
+❯ /clear                                                                        
+
+❯ read CLAUDE.md. milestone 2 is done (generate_sql -> execute_sql -> answer    
+  works).                                                                       
+                                                                                
+  milestone 3: validation, error handling and retries. propose a plan, no code  
+  yet.                                                                          
+                                                                                
+  scope:                                                                        
+  a validate_sql node with one clear validate_sql function: only SELECT or      
+  WITH, a single statement, no write keywords (INSERT, UPDATE, DELETE, DROP,    
+  ALTER, CREATE), add a LIMIT if missing                                        
+  a check_result node after execute_sql: empty result gets one retry, and a     
+  single row with only NULL values (like AVG with no grades) also counts as     
+  empty                                                                         
+  when validation, execution or the check fails, go back to generate_sql with   
+  the error message and the failed sql, so the model can fix it                 
+  max 3 attempts per step, then a give_up node that returns a clear message to  
+  the user (what was tried and the last error), not a crash                     
+  conditional edges in the graph for all of this, with small routing functions  
+  that are easy to read                                                         
+  attempts and error reset when a step succeeds                                 
+  unit tests for validate_sql, one test per rule, no LLM needed                 
+                                                                                
+  not in this milestone: planner, tracing, agent tests with a fake llm          
+                                                                                
+  also tell me:                                                                 
+  how the graph looks now (draw it as text)                                     
+  what the user sees in each failure case: bad sql, empty result, 3 failed      
+  attempts                                                                      
+  why the keyword check alone is not enough for security and what protects us   
+  for real                                                                      
+
+  Searched for 1 pattern, ran 3 shell commands (ctrl+o to expand)
+
+⏺ User answered Claude's questions:
+  ⎿  · check_result has to know whether the current step already used its one 
+     empty-result retry. CLAUDE.md fixes the state keys, so how should that be 
+     tracked? → option 2, add empty_retry_used. i want results to only hold good
+     results, so the answer node and the planner later dont have to filter. the
+     tracing in milestone 4 will log every query anyway. update the state list 
+     in CLAUDE.md too
+
+⏺ Updated plan
+  ⎿  /plan to preview
+  ⎿  User rejected Claude's plan:
+     ╭─────────────────────────────────────────────────────────────────────────╮
+     │ Milestone 3 — validation, error handling, retries                       │
+     │                                                                         │
+     │ Context                                                                 │
+     │                                                                         │
+     │ Milestone 2 runs generate_sql -> execute_sql -> answer in a straight    │
+     │ line: a bad query                                                       │
+     │ ends the run with a raw DB error, an empty result is final, and nothing │
+     │ checks the SQL                                                          │
+     │ before it runs. Milestone 3 adds a validate_sql node, a check_result    │
+     │ node, retries                                                           │
+     │ that feed the error and the failed SQL back to the model (max 3         │
+     │ attempts per step), and a                                               │
+     │ give_up node. No planner, tracing or fake-LLM tests yet.                │
+     │                                                                         │
+     │ Graph after this milestone                                              │
+     │                                                                         │
+     │ START                                                                   │
+     │   |                                                                     │
+     │   v                                                                     │
+     │ generate_sql                                                            │
+     │ <---------------------------+------------------+-----------------+      │
+     │   |  (attempts += 1)                      |                  |          │
+     │        |                                                                │
+     │   v                                       | error and        | error    │
+     │ and       | empty, first time                                           │
+     │ validate_sql ---- error ----------------->+ attempts < 3     | attempts │
+     │ < 3    | and attempts < 3                                               │
+     │   | ok                                    |                  |          │
+     │        |                                                                │
+     │   v                                       |                  |          │
+     │        |                                                                │
+     │ execute_sql ----- error ------------------------------------>+          │
+     │        |                                                                │
+     │   | ok                                                                  │
+     │        |                                                                │
+     │   v                                                                     │
+     │        |                                                                │
+     │ check_result ---- empty result (no rows, or one row of only NULLs)      │
+     │ ----------->+                                                           │
+     │   | ok (or empty a second time / no attempts left -> accept as "no      │
+     │ records")                                                               │
+     │   v                                                                     │
+     │ answer --> END                                                          │
+     │                                                                         │
+     │ any "error" edge with attempts == 3  -->  give_up --> END               │
+     │                                                                         │
+     │ Each of the three nodes ends in a conditional edge with one small       │
+     │ routing function.                                                       │
+     │                                                                         │
+     │ State (src/agent/state.py, and update the list in CLAUDE.md)            │
+     │                                                                         │
+     │ Two new keys; you picked the flag for the empty retry so results only   │
+     │ holds good results:                                                     │
+     │ - empty_retry_used: bool — set by check_result when it uses the one     │
+     │   empty retry, reset when the step succeeds.                            │
+     │ - last_result: dict | None — {"columns", "rows"} from execute_sql,      │
+     │   waiting for check_result.                                             │
+     │   This one follows from your choice: if execute_sql can't append to     │
+     │   results, the rows need                                                │
+     │   somewhere to wait until check_result accepts them. check_result is    │
+     │   now the only node that                                                │
+     │   appends to results.                                                   │
+     │                                                                         │
+     │ initial_state sets both (False / None). status stays "running" until    │
+     │ answer ("done")                                                         │
+     │ or give_up ("error").                                                   │
+     │                                                                         │
+     │ 1. validate_sql function — new src/agent/sql_validation.py              │
+     │                                                                         │
+     │ A pure function with no LLM or DB: validate_sql(sql: str, row_limit:    │
+     │ int = ROW_LIMIT) -> str.                                                │
+     │ It returns the cleaned SQL (LIMIT added) or raises ValueError with a    │
+     │ short message the                                                       │
+     │ model can act on. Steps:                                                │
+     │ 1. Strip whitespace and one trailing ;. Empty → "Query is empty."       │
+     │ 2. Make a copy with string literals and comments blanked out, used only │
+     │    for the checks.                                                      │
+     │    This stops WHERE status = 'DROPPED' or -- delete later from being    │
+     │    flagged.                                                             │
+     │ 3. Only SELECT/WITH: the first word of the copy must be SELECT or WITH. │
+     │ 4. Single statement: no ; left in the copy.                             │
+     │ 5. No write keywords: whole-word, case-insensitive match on             │
+     │    INSERT|UPDATE|DELETE|DROP|ALTER|CREATE. \b means created_at doesn't  │
+     │    match.                                                               │
+     │ 6. LIMIT: if the copy has no LIMIT, append "\nLIMIT {row_limit}". The   │
+     │    newline matters                                                      │
+     │    in case the query ends with a -- comment. ROW_LIMIT = 200.           │
+     │                                                                         │
+     │ Known simplification to mention in an interview: the LIMIT check is     │
+     │ "LIMIT anywhere", so a                                                  │
+     │ LIMIT inside a subquery counts. LIMIT also isn't universal SQL (SQL     │
+     │ Server uses TOP); fine                                                  │
+     │ for SQLite/Postgres/MySQL and noted in docs.                            │
+     │                                                                         │
+     │ 2. Nodes (src/agent/nodes.py)                                           │
+     │                                                                         │
+     │ MAX_ATTEMPTS = 3 lives here.                                            │
+     │ - generate_sql: returns attempts + 1. When state["error"] is set, it    │
+     │   adds the                                                              │
+     │   retry section (failed SQL + error) to the prompt.                     │
+     │ - validate_sql (node): calls the function. Ok → {"sql": cleaned,        │
+     │   "error": None}.                                                       │
+     │   Failure → {"error": "Validation failed: <msg>"}.                      │
+     │ - execute_sql: ok → {"last_result": {...}, "error": None}. Failure →    │
+     │   {"error": "Database error: <msg>"}, using exc.orig when present so    │
+     │   the model gets                                                        │
+     │   no such column: s.gpa and not SQLAlchemy's long wrapper text. It no   │
+     │   longer sets status.                                                   │
+     │ - check_result:                                                         │
+     │   - not empty → append {step_index, step, sql, columns, rows} to        │
+     │     results, reset                                                      │
+     │     attempts=0, error=None, empty_retry_used=False, last_result=None.   │
+     │   - empty and not empty_retry_used and attempts < MAX_ATTEMPTS →        │
+     │     {"error": "Empty result: ...", "empty_retry_used": True}. The       │
+     │     message tells the model to check filters, joins and value           │
+     │     spelling against the business rules, and says the same query is     │
+     │     fine if no data really exists.                                      │
+     │   - empty otherwise → accept it as a real empty answer (same as the     │
+     │     success branch).                                                    │
+     │     A truthful "no records" beats give_up.                              │
+     │ - is_empty_result(rows): not rows, or one row whose values are all      │
+     │   None. COUNT = 0                                                       │
+     │   is not empty, because 0 is a real answer.                             │
+     │ - answer: the error branch goes away (answer is only reached on         │
+     │   success). The empty                                                   │
+     │   branch uses is_empty_result, so AVG = NULL also gives EMPTY_ANSWER    │
+     │   without an LLM call.                                                  │
+     │ - give_up (new, no LLM): {"answer": GIVE_UP_ANSWER.format(...),         │
+     │   "status": "error"}.                                                   │
+     │                                                                         │
+     │ 3. Routing (src/agent/graph.py)                                         │
+     │                                                                         │
+     │ def retry_or_give_up(state):   return "generate_sql" if                 │
+     │ state["attempts"] < MAX_ATTEMPTS else "give_up"                         │
+     │ def after_validate(state):     return retry_or_give_up(state) if        │
+     │ state["error"] else "execute_sql"                                       │
+     │ def after_execute(state):      return retry_or_give_up(state) if        │
+     │ state["error"] else "check_result"                                      │
+     │ def after_check(state):        return retry_or_give_up(state) if        │
+     │ state["error"] else "answer"                                            │
+     │ They're wired with add_conditional_edges(..., path_map=[...]) so the    │
+     │ drawn graph shows                                                       │
+     │ real edges. Moving to the next step after success waits for the planner │
+     │ (milestone 4);                                                          │
+     │ for now after_check goes to answer.                                     │
+     │                                                                         │
+     │ 4. Prompts (src/agent/prompts.py)                                       │
+     │                                                                         │
+     │ - RETRY_SECTION: "## Previous attempt (failed)\nSQL:\n{sql}\nProblem:   │
+     │   {error}\nWrite a corrected query."                                    │
+     │   GENERATE_SQL_PROMPT gets a {retry} placeholder (empty string on the   │
+     │   first attempt).                                                       │
+     │ - GIVE_UP_ANSWER, EMPTY_ANSWER stay here; ERROR_ANSWER is removed.      │
+     │                                                                         │
+     │ 5. Tests — new tests/test_sql_validation.py (no LLM, no DB)             │
+     │                                                                         │
+     │ One test per rule:                                                      │
+     │ - accepts a plain SELECT; accepts a WITH query                          │
+     │ - rejects non-SELECT (PRAGMA table_info(students))                      │
+     │ - rejects multiple statements (SELECT 1; SELECT 2); allows one trailing │
+     │   ;                                                                     │
+     │ - rejects each write keyword (parametrized over the 6; WITH x AS (...)  │
+     │   DELETE ... included)                                                  │
+     │ - allows keywords inside string literals and as part of names           │
+     │   ('DROPPED', created_at)                                               │
+     │ - adds LIMIT when missing (also after a trailing -- comment); keeps an  │
+     │   existing LIMIT                                                        │
+     │ - rejects empty SQL                                                     │
+     │                                                                         │
+     │ Plus a few one-line tests for is_empty_result ([], [(None,)], [(0,)],   │
+     │ [(None, None)]).                                                        │
+     │ It's pure logic and it's the rule that decides the empty retry.         │
+     │                                                                         │
+     │ 6. Small touch-ups                                                      │
+     │                                                                         │
+     │ - src/main.py: print status and attempts so failures are visible on the │
+     │   CLI.                                                                  │
+     │ - CLAUDE.md: update the State line with empty_retry_used and            │
+     │   last_result.                                                          │
+     │ - No new packages (regex only, no sqlparse), so requirements.txt        │
+     │   doesn't change.                                                       │
+     │                                                                         │
+     │ What the user sees                                                      │
+     │                                                                         │
+     │ - Bad SQL (unknown column, syntax error, or validation reject like two  │
+     │   statements):                                                          │
+     │   usually nothing. The error and SQL go back to the model, attempt 2    │
+     │   fixes it, and the user                                                │
+     │   gets a normal answer. The retry shows in attempts, and in the trace   │
+     │   from milestone 4.                                                     │
+     │ - Empty result: one silent retry with a "check your filters" hint. If   │
+     │   it's still empty:                                                     │
+     │   "The query returned no matching records." AVG over ungraded           │
+     │   enrollments → the same message,                                       │
+     │   not "the average is None".                                            │
+     │ - 3 failed attempts → give_up:                                          │
+     │ Sorry, I couldn't answer this question after 3 attempts.                │
+     │ Last SQL tried:                                                         │
+     │   SELECT s.name, s.gpa FROM students s ...                              │
+     │ Last error: Database error: no such column: s.gpa                       │
+     │ Try rephrasing the question or naming the table/field you mean.         │
+     │   Only the last SQL and error are in the state; all attempts go in the  │
+     │   trace in milestone 4.                                                 │
+     │                                                                         │
+     │ Why the keyword check alone isn't security                              │
+     │                                                                         │
+     │ - It's a text denylist, so it's incomplete by design. SQLite has other  │
+     │   ways to change things                                                 │
+     │   or reach outside the DB that aren't on the list: REPLACE, ATTACH      │
+     │   DATABASE, PRAGMA                                                      │
+     │   writes, VACUUM INTO, load_extension(). Other dialects add more (COPY, │
+     │   GRANT,                                                                │
+     │   MERGE, SELECT ... INTO, side-effecting functions). A list can't keep  │
+     │   up with every dialect.                                                │
+     │ - Text matching is fragile both ways: it can block valid names or       │
+     │   literals, and it can miss                                             │
+     │   obfuscated input. It doesn't understand SQL.                          │
+     │ - It does nothing about cost: a SELECT with a cross join can still scan │
+     │   a lot, because                                                        │
+     │   LIMIT caps output rows, not work.                                     │
+     │ - What actually protects us is the database. The file is opened with    │
+     │   mode=ro (SQLite                                                       │
+     │   itself refuses writes) plus PRAGMA query_only = ON (already in        │
+     │   src/db/database.py:17,                                                │
+     │   tested in tests/test_database.py). Even SQL that passes validation    │
+     │   can't write. In                                                       │
+     │   production that would be a SELECT-only DB user on a read replica, a   │
+     │   statement timeout, and                                                │
+     │   only the views/tables the agent should see.                           │
+     │ - So the validator's real job is to fail fast with a clear message the  │
+     │   model can fix and to                                                  │
+     │   keep results bounded. It's a guardrail for correctness, not the       │
+     │   security boundary.                                                    │
+     │   I'll write this up in docs.                                           │
+     │                                                                         │
+     │ Verification                                                            │
+     │                                                                         │
+     │ 1. pytest — new validation tests plus the existing DB tests all pass.   │
+     │ 2. python -c "from src.agent.graph import build_graph;                  │
+     │    ...draw_mermaid()" with a dummy                                      │
+     │    LLM, to check the edges match the diagram above.                     │
+     │ 3. Real runs via python -m src.main:                                    │
+     │    - a normal question ("How many students are there?") → attempts 1,   │
+     │      status done                                                        │
+     │    - an empty-result question ("Which students got 100 in Fall 2026?")  │
+     │      → no records message                                               │
+     │    - an all-NULL aggregate ("Average grade in Fall 2026?") → no records │
+     │      message, no LLM answer                                             │
+     │    - a forced failure (temporarily set MAX_ATTEMPTS path / a nonsense   │
+     │      question like                                                      │
+     │      "What is the GPA column of students?") → give_up message, no       │
+     │      crash.                                                             │
+     │ 4. Full fake-LLM graph tests for these paths come in their own          │
+     │    milestone.                                                           │
+     ╰─────────────────────────────────────────────────────────────────────────╯
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+  Wrote 2 memories (ctrl+o to expand)
+
+⏺ I've updated the empty-result retry so it can only fix spelling, casing, join
+  paths, or columns, and never alters filters. A second empty result is now
+  accepted as a valid answer, and I've saved this rule as a project memory. 
+  · summary
+
+⏺ User approved Claude's plan
+  ⎿  Plan saved to: 
+     ~/.claude/plans/pasted-content-id-9500-read-claude-md-zesty-waffle.md · 
+     /plan to edit
+     Milestone 3 — validation, error handling, retries
+
+     Context
+
+     Milestone 2 runs generate_sql -> execute_sql -> answer in a straight line:
+     a bad query
+     ends the run with a raw DB error, an empty result is final, and nothing
+     checks the SQL
+     before it runs. Milestone 3 adds a validate_sql node, a check_result node,
+     retries
+     that feed the error and the failed SQL back to the model (max 3 attempts
+     per step), and a
+     give_up node. No planner, tracing or fake-LLM tests yet.
+
+     Graph after this milestone
+
+     START
+       |
+       v
+     generate_sql  
+     <---------------------------+------------------+-----------------+
+       |  (attempts += 1)                      |                  |             
+        |
+       v                                       | error and        | error and   
+        | empty, first time
+     validate_sql ---- error ----------------->+ attempts < 3     | attempts < 3
+        | and attempts < 3
+       | ok                                    |                  |             
+        |
+       v                                       |                  |             
+        |
+     execute_sql ----- error ------------------------------------>+             
+        |
+       | ok                                                                     
+        |
+       v                                                                        
+        |
+     check_result ---- empty result (no rows, or one row of only NULLs) 
+     ----------->+
+       | ok (or empty a second time / no attempts left -> accept as "no 
+     records")
+       v
+     answer --> END
+
+     any "error" edge with attempts == 3  -->  give_up --> END
+
+     Each of the three nodes ends in a conditional edge with one small routing
+     function.
+
+     State (src/agent/state.py, and update the list in CLAUDE.md)
+
+     Two new keys; you picked the flag for the empty retry so results only holds
+     good results:
+     - empty_retry_used: bool — set by check_result when it uses the one empty
+       retry, reset when the step succeeds.
+     - last_result: dict | None — {"columns", "rows"} from execute_sql, waiting
+       for check_result.
+       This one follows from your choice: if execute_sql can't append to
+       results, the rows need
+       somewhere to wait until check_result accepts them. check_result is now
+       the only node that
+       appends to results.
+
+     initial_state sets both (False / None). status stays "running" until answer
+     ("done")
+     or give_up ("error").
+
+     1. validate_sql function — new src/agent/sql_validation.py
+
+     A pure function with no LLM or DB: validate_sql(sql: str, row_limit: int = 
+     ROW_LIMIT) -> str.
+     It returns the cleaned SQL (LIMIT added) or raises ValueError with a short
+     message the
+     model can act on. Steps:
+     1. Strip whitespace and one trailing ;. Empty → "Query is empty."
+     2. Make a copy with string literals and comments blanked out, used only for
+        the checks.
+        This stops WHERE status = 'DROPPED' or -- delete later from being
+        flagged.
+     3. Only SELECT/WITH: the first word of the copy must be SELECT or WITH.
+     4. Single statement: no ; left in the copy.
+     5. No write keywords: whole-word, case-insensitive match on
+        INSERT|UPDATE|DELETE|DROP|ALTER|CREATE. \b means created_at doesn't
+        match.
+     6. LIMIT: if the copy has no LIMIT, append "\nLIMIT {row_limit}". The
+        newline matters
+        in case the query ends with a -- comment. ROW_LIMIT = 200.
+
+     Known simplification to mention in an interview: the LIMIT check is "LIMIT
+     anywhere", so a
+     LIMIT inside a subquery counts. LIMIT also isn't universal SQL (SQL Server
+     uses TOP); fine
+     for SQLite/Postgres/MySQL and noted in docs.
+
+     2. Nodes (src/agent/nodes.py)
+
+     MAX_ATTEMPTS = 3 lives here.
+     - generate_sql: returns attempts + 1. When state["error"] is set, it adds
+       the
+       retry section (failed SQL + error) to the prompt.
+     - validate_sql (node): calls the function. Ok → {"sql": cleaned, "error": 
+       None}.
+       Failure → {"error": "Validation failed: <msg>"}.
+     - execute_sql: ok → {"last_result": {...}, "error": None}. Failure →
+       {"error": "Database error: <msg>"}, using exc.orig when present so the
+       model gets
+       no such column: s.gpa and not SQLAlchemy's long wrapper text. It no
+       longer sets status.
+     - check_result:
+       - not empty → append {step_index, step, sql, columns, rows} to results,
+         reset
+         attempts=0, error=None, empty_retry_used=False, last_result=None.
+       - empty and not empty_retry_used and attempts < MAX_ATTEMPTS → {"error": 
+         "Empty result: ...", "empty_retry_used": True}. The text comes from
+         prompts.EMPTY_RETRY_HINT (see section 4).
+         It must not change what the question means. The model may only fix
+         mistakes: spelling or
+         case of a literal value ('fall 2026' → 'Fall 2026'), a wrong join path,
+         the wrong column.
+         It must not widen a filter, loosen a comparison (= 100 → >= 90), or
+         drop a condition.
+         If the query already matches the question, it returns the same query,
+         and the second empty
+         result is accepted as the real answer.
+       - empty otherwise → accept it as a real empty answer (same as the success
+         branch).
+         A truthful "no records" beats give_up.
+     - is_empty_result(rows): not rows, or one row whose values are all None.
+       COUNT = 0
+       is not empty, because 0 is a real answer.
+     - answer: the error branch goes away (answer is only reached on success).
+       The empty
+       branch uses is_empty_result, so AVG = NULL also gives EMPTY_ANSWER
+       without an LLM call.
+     - give_up (new, no LLM): {"answer": GIVE_UP_ANSWER.format(...), "status": 
+       "error"}.
+
+     3. Routing (src/agent/graph.py)
+
+     def retry_or_give_up(state):   return "generate_sql" if state["attempts"] <
+     MAX_ATTEMPTS else "give_up"
+     def after_validate(state):     return retry_or_give_up(state) if
+     state["error"] else "execute_sql"
+     def after_execute(state):      return retry_or_give_up(state) if
+     state["error"] else "check_result"
+     def after_check(state):        return retry_or_give_up(state) if
+     state["error"] else "answer"
+     They're wired with add_conditional_edges(..., path_map=[...]) so the drawn
+     graph shows
+     real edges. Moving to the next step after success waits for the planner
+     (milestone 4);
+     for now after_check goes to answer.
+
+     4. Prompts (src/agent/prompts.py)
+
+     - RETRY_SECTION: "## Previous attempt (failed)\nSQL:\n{sql}\nProblem:
+       {error}\nWrite a corrected query."
+       GENERATE_SQL_PROMPT gets a {retry} placeholder (empty string on the first
+       attempt).
+     - EMPTY_RETRY_HINT (used as the {error} in RETRY_SECTION for empty
+       results):
+     Empty result: the query ran but returned no rows (or only NULLs).
+     This may be the correct answer. Check only for mistakes:
+     - a literal value spelled or cased differently from the data (see business 
+     rules)
+     - a wrong join path or wrong column
+     Do NOT change the meaning of the question: never widen, loosen or remove a 
+     filter
+     (e.g. do not turn "= 100" into ">= 90"). If the query already matches the 
+     question,
+     return it unchanged.
+     - GIVE_UP_ANSWER, EMPTY_ANSWER stay here; ERROR_ANSWER is removed.
+
+     5. Tests — new tests/test_sql_validation.py (no LLM, no DB)
+
+     One test per rule:
+     - accepts a plain SELECT; accepts a WITH query
+     - rejects non-SELECT (PRAGMA table_info(students))
+     - rejects multiple statements (SELECT 1; SELECT 2); allows one trailing ;
+     - rejects each write keyword (parametrized over the 6; WITH x AS (...) 
+       DELETE ... included)
+     - allows keywords inside string literals and as part of names ('DROPPED',
+       created_at)
+     - adds LIMIT when missing (also after a trailing -- comment); keeps an
+       existing LIMIT
+     - rejects empty SQL
+
+     Plus a few one-line tests for is_empty_result ([], [(None,)], [(0,)],
+     [(None, None)]).
+     It's pure logic and it's the rule that decides the empty retry.
+
+     6. Small touch-ups
+
+     - src/main.py: print status and attempts so failures are visible on the
+       CLI.
+     - CLAUDE.md: update the State line with empty_retry_used and last_result.
+     - No new packages (regex only, no sqlparse), so requirements.txt doesn't
+       change.
+
+     What the user sees
+
+     - Bad SQL (unknown column, syntax error, or validation reject like two
+       statements):
+       usually nothing. The error and SQL go back to the model, attempt 2 fixes
+       it, and the user
+       gets a normal answer. The retry shows in attempts, and in the trace from
+       milestone 4.
+     - Empty result: one silent retry that may only fix mistakes and keeps the
+       question's
+       meaning. "Which students got 100?" stays grade = 100. If it's still
+       empty:
+       "The query returned no matching records." AVG over ungraded enrollments →
+       the same message,
+       not "the average is None".
+     - 3 failed attempts → give_up:
+     Sorry, I couldn't answer this question after 3 attempts.
+     Last SQL tried:
+       SELECT s.name, s.gpa FROM students s ...
+     Last error: Database error: no such column: s.gpa
+     Try rephrasing the question or naming the table/field you mean.
+       Only the last SQL and error are in the state; all attempts go in the
+       trace in milestone 4.
+
+     Why the keyword check alone isn't security
+
+     - It's a text denylist, so it's incomplete by design. SQLite has other ways
+       to change things
+       or reach outside the DB that aren't on the list: REPLACE, ATTACH 
+       DATABASE, PRAGMA
+       writes, VACUUM INTO, load_extension(). Other dialects add more (COPY,
+       GRANT,
+       MERGE, SELECT ... INTO, side-effecting functions). A list can't keep up
+       with every dialect.
+     - Text matching is fragile both ways: it can block valid names or literals,
+       and it can miss
+       obfuscated input. It doesn't understand SQL.
+     - It does nothing about cost: a SELECT with a cross join can still scan a
+       lot, because
+       LIMIT caps output rows, not work.
+     - What actually protects us is the database. The file is opened with
+       mode=ro (SQLite
+       itself refuses writes) plus PRAGMA query_only = ON (already in
+       src/db/database.py:17,
+       tested in tests/test_database.py). Even SQL that passes validation can't
+       write. In
+       production that would be a SELECT-only DB user on a read replica, a
+       statement timeout, and
+       only the views/tables the agent should see.
+     - So the validator's real job is to fail fast with a clear message the
+       model can fix and to
+       keep results bounded. It's a guardrail for correctness, not the security
+       boundary.
+       I'll write this up in docs.
+
+     Verification
+
+     1. pytest — new validation tests plus the existing DB tests all pass.
+     2. python -c "from src.agent.graph import build_graph; ...draw_mermaid()"
+        with a dummy
+        LLM, to check the edges match the diagram above.
+     3. Real runs via python -m src.main:
+        - a normal question ("How many students are there?") → attempts 1,
+          status done
+        - an empty-result question ("Which students got 100?") → no records
+          message, and the
+          retried SQL still has grade = 100 (not widened)
+        - a casing mistake that the retry should fix (e.g. "in fall 2025") →
+          real rows
+        - an all-NULL aggregate ("Average grade in Fall 2026?") → no records
+          message, no LLM answer
+        - a forced failure (temporarily set MAX_ATTEMPTS path / a nonsense
+          question like
+          "What is the GPA column of students?") → give_up message, no crash.
+     4. Full fake-LLM graph tests for these paths come in their own milestone.
+
+⏺ Write(src/agent/sql_validation.py)
+  ⎿  Wrote 45 lines to src/agent/sql_validation.py
+      1 """Check generated SQL before it runs. A pure function: no LLM, n
+        o database.
+      2 
+      3 This is a guardrail for the model (fast, clear errors it can fix)
+        , not the security
+      4 boundary. Writes are blocked for real by the read-only connection
+         in src/db/database.py.
+      5 """
+      6 import re
+      7 
+     … +38 lines (ctrl+o to expand)
+
+⏺ Write(src/agent/state.py)
+  ⎿  Added 9 lines, removed 4 lines
+       7      question: str
+       8      steps: list[str]          # sub-questions; for now just [qu
+          estion], the planner fills it later
+       9      step_index: int           # which step generate_sql is work
+          ing on
+      10 -    sql: str                  # the latest generated query     
+      11 -    error: str | None         # latest failure message, None wh
+         -en fine                                                        
+      12 -    attempts: int             # tries for the current step (use
+         -d once retries exist)                                          
+      10 +    sql: str                  # the latest generated (then vali
+         +dated) query                                                   
+      11 +    error: str | None         # latest failure message, fed bac
+         +k to generate_sql; None when fine                              
+      12 +    attempts: int             # generate_sql calls for the curr
+         +ent step, reset when the step succeeds                         
+      13 +    empty_retry_used: bool    # the one retry for an empty resu
+         +lt was used in this step                                       
+      14 +    last_result: dict | None  # {"columns", "rows"} from execut
+         +e_sql, waiting for check_result                                
+      15      # operator.add reducer: nodes return only new entries, Lang
+          Graph appends them.
+      14 -    results: Annotated[list[dict], operator.add]   # {"step", "
+         -sql", "columns", "rows"}                                       
+      16 +    # Only check_result appends, so this holds accepted results
+         + only.                                                         
+      17 +    results: Annotated[list[dict], operator.add]   # {"step_ind
+         +ex", "step", "sql", "columns", "rows"}                         
+      18      answer: str
+      19      status: str               # "running" | "done" | "error"
+      20  
+     ...
+      27          sql="",
+      28          error=None,
+      29          attempts=0,
+      30 +        empty_retry_used=False,                                
+      31 +        last_result=None,                                      
+      32          results=[],
+      33          answer="",
+      34          status="running",
+
+⏺ Prompts next.
+
+⏺ Update(src/agent/prompts.py)
+  ⎿  Added 21 lines
+      15  
+      16  ## Question
+      17  {question}
+      18 +{retry}"""                                                     
+      19 +                                                               
+      20 +# Appended to GENERATE_SQL_PROMPT when the previous attempt for
+         + this step failed.                                             
+      21 +RETRY_SECTION = """                                            
+      22 +## Previous attempt (failed)                                   
+      23 +SQL:                                                           
+      24 +{sql}                                                          
+      25 +                                                               
+      26 +Problem: {error}                                               
+      27 +                                                               
+      28 +Write a corrected query.                                       
+      29  """
+      30  
+      31 +# The error check_result reports for an empty result. It must n
+         +ot invite the model to                                         
+      32 +# change the question: an empty result can be the correct answe
+         +r.                                                             
+      33 +EMPTY_RETRY_HINT = """Empty result: the query ran but returned 
+         +no rows (or only NULLs).                                       
+      34 +This may be the correct answer. Check only for mistakes:       
+      35 +- a literal value spelled or cased differently from the data (s
+         +ee business rules)                                             
+      36 +- a wrong join path or wrong column                            
+      37 +Do NOT change the meaning of the question: never widen, loosen 
+         +or remove a filter                                             
+      38 +(e.g. do not turn "= 100" into ">= 90"). If the query already m
+         +atches the question,                                           
+      39 +return it unchanged."""                                        
+      40 +                                                               
+      41  ANSWER_PROMPT = """You answer a question using ONLY the query r
+          esult below.
+      42  
+      43  Rules:
+
+⏺ Update(src/agent/prompts.py)
+  ⎿  Added 6 lines, removed 1 line
+      60  {table}
+      61  """
+      62  
+      63 -ERROR_ANSWER = "I couldn't answer that: the query failed with t
+         -his error: {error}"                                            
+      63  EMPTY_ANSWER = "The query returned no matching records."
+      64  
+      65 +GIVE_UP_ANSWER = """Sorry, I couldn't answer this question afte
+         +r {attempts} attempts.                                         
+      66 +Last SQL tried:                                                
+      67 +{sql}                                                          
+      68 +Last error: {error}                                            
+      69 +Try rephrasing the question or naming the table/field you mean.
+         +"""                                                            
+      70  
+      71 +                                                               
+      72  def format_rows_as_table(columns: list[str], rows: list[tuple])
+           -> str:
+      73      """Render rows as a markdown table, truncated to MAX_ROWS_I
+          N_PROMPT rows."""
+      74      shown = rows[:MAX_ROWS_IN_PROMPT]
+
+⏺ Write(src/agent/nodes.py)
+  ⎿  Added 57 lines, removed 11 lines
+       1  """Graph nodes. Each takes the state (plus bound dependencies) 
+          and returns only the keys it changes."""
+       2  import re
+       3 +import textwrap                                                
+       4  
+       5  from sqlalchemy import Engine
+       6  
+       7  from src.agent import prompts
+       8 +from src.agent.sql_validation import validate_sql as check_sql_
+         +rules                                                          
+       9  from src.agent.state import AgentState
+      10  from src.db.database import run_query
+      11  
+      12 +MAX_ATTEMPTS = 3  # generate_sql calls per step before give_up 
+      13  
+      14 +                                                               
+      15  def generate_sql(state: AgentState, *, llm, schema: str, notes:
+           str, dialect: str) -> dict:
+      16 +    retry = ""                                                 
+      17 +    if state["error"]:  # the previous attempt failed: show the
+         + model its SQL and the error                                   
+      18 +        retry = prompts.RETRY_SECTION.format(sql=state["sql"], 
+         +error=state["error"])                                          
+      19 +                                                               
+      20      prompt = prompts.GENERATE_SQL_PROMPT.format(
+      21          dialect=dialect,
+      22          schema=schema,
+      23          notes=notes,
+      24          question=state["steps"][state["step_index"]],
+      25 +        retry=retry,                                           
+      26      )
+      27      reply = llm.invoke(prompt)
+      19 -    return {"sql": extract_sql(reply.content)}                 
+      28 +    return {"sql": extract_sql(reply.content), "attempts": stat
+         +e["attempts"] + 1}                                             
+      29  
+      30  
+      31 +def validate_sql(state: AgentState) -> dict:                   
+      32 +    try:                                                       
+      33 +        sql = check_sql_rules(state["sql"])                    
+      34 +    except ValueError as exc:                                  
+      35 +        return {"error": f"Validation failed: {exc}"}          
+      36 +    return {"sql": sql, "error": None}                         
+      37 +                                                               
+      38 +                                                               
+      39  def execute_sql(state: AgentState, *, engine: Engine) -> dict:
+      40      try:
+      41          result = run_query(engine, state["sql"])
+      25 -    except Exception as exc:  # any DB error is reported back, 
+         -not raised                                                     
+      26 -        return {"error": str(exc), "status": "error"}          
+      42 +    except Exception as exc:  # any DB error goes back to the m
+         +odel, not raised                                               
+      43 +        # exc.orig is the driver's short message ("no such colu
+         +mn: x"), without                                               
+      44 +        # SQLAlchemy's wrapper text and link.                  
+      45 +        return {"error": f"Database error: {getattr(exc, 'orig'
+         +, exc)}"}                                                      
+      46 +    return {"last_result": {"columns": result.columns, "rows": 
+         +result.rows}, "error": None}                                   
+      47  
+      48 +                                                               
+      49 +def check_result(state: AgentState) -> dict:                   
+      50 +    rows = state["last_result"]["rows"]                        
+      51 +    can_retry = not state["empty_retry_used"] and state["attemp
+         +ts"] < MAX_ATTEMPTS                                            
+      52 +    if is_empty_result(rows) and can_retry:                    
+      53 +        return {"error": prompts.EMPTY_RETRY_HINT, "empty_retry
+         +_used": True}                                                  
+      54 +                                                               
+      55 +    # Accepted, including a second empty result: "no records" c
+         +an be the true answer.                                         
+      56      entry = {
+      57 +        "step_index": state["step_index"],                     
+      58          "step": state["steps"][state["step_index"]],
+      59          "sql": state["sql"],
+      31 -        "columns": result.columns,                             
+      32 -        "rows": result.rows,                                   
+      60 +        **state["last_result"],                                
+      61      }
+      34 -    return {"results": [entry], "error": None}                 
+      62 +    return {                                                   
+      63 +        "results": [entry],                                    
+      64 +        "last_result": None,                                   
+      65 +        "error": None,                                         
+      66 +        "attempts": 0,                                         
+      67 +        "empty_retry_used": False,                             
+      68 +    }                                                          
+      69  
+      70  
+      71  def answer(state: AgentState, *, llm, notes: str) -> dict:
+      38 -    # Without real rows there is nothing to ground an answer in
+         -, so skip the LLM.                                             
+      39 -    if state["error"]:                                         
+      40 -        return {"answer": prompts.ERROR_ANSWER.format(error=sta
+         -te["error"]), "status": "error"}                               
+      41 -                                                               
+      72      last = state["results"][-1]
+      43 -    if not last["rows"]:                                       
+      73 +    if is_empty_result(last["rows"]):  # nothing to ground an a
+         +nswer in, so skip the LLM                                      
+      74          return {"answer": prompts.EMPTY_ANSWER, "status": "done
+          "}
+      75  
+      76      prompt = prompts.ANSWER_PROMPT.format(
+     ...
+       83      return {"answer": reply.content.strip(), "status": "done"}
+       84  
+       85  
+       86 +def give_up(state: AgentState) -> dict:                       
+       87 +    message = prompts.GIVE_UP_ANSWER.format(                  
+       88 +        attempts=state["attempts"],                           
+       89 +        sql=textwrap.indent(state["sql"] or "(none)", "  "),  
+       90 +        error=state["error"],                                 
+       91 +    )                                                         
+       92 +    return {"answer": message, "status": "error"}             
+       93 +                                                              
+       94 +                                                              
+       95 +def is_empty_result(rows: list[tuple]) -> bool:               
+       96 +    """No rows, or one row of only NULLs (e.g. AVG over nothin
+          +g). COUNT = 0 is a real answer."""                            
+       97 +    if not rows:                                              
+       98 +        return True                                           
+       99 +    return len(rows) == 1 and all(value is None for value in r
+          +ows[0])                                                       
+      100 +                                                              
+      101 +                                                              
+      102  def extract_sql(text: str) -> str:
+      103      """Strip markdown code fences the model sometimes wraps ar
+           ound the query."""
+      104      match = re.search(r"```(?:\w+)?\s*(.*?)```", text, re.DOTA
+           LL)
+
+⏺ Write(src/agent/graph.py)
+  ⎿  Added 37 lines, removed 3 lines
+       1 -"""Wire the nodes into a LangGraph graph: generate_sql -> execu
+         -te_sql -> answer."""                                           
+       1 +"""Wire the nodes into a LangGraph graph.                      
+       2 +                                                               
+       3 +generate_sql -> validate_sql -> execute_sql -> check_result -> 
+         +answer                                                         
+       4 +Any failure loops back to generate_sql with the error, until MA
+         +X_ATTEMPTS, then give_up.                                      
+       5 +"""                                                            
+       6  from functools import partial
+       7  
+       8  from langgraph.graph import END, START, StateGraph
+       9  from sqlalchemy import Engine
+      10  
+      11  from src.agent import nodes
+      12 +from src.agent.nodes import MAX_ATTEMPTS                       
+      13  from src.agent.state import AgentState
+      14  from src.db.database import schema_as_text
+      15  
+      16  
+      17 +# --- Routing: each returns the name of the next node ---------
+         +------------------                                             
+      18 +                                                               
+      19 +def retry_or_give_up(state: AgentState) -> str:                
+      20 +    return "generate_sql" if state["attempts"] < MAX_ATTEMPTS e
+         +lse "give_up"                                                  
+      21 +                                                               
+      22 +                                                               
+      23 +def after_validate(state: AgentState) -> str:                  
+      24 +    return retry_or_give_up(state) if state["error"] else "exec
+         +ute_sql"                                                       
+      25 +                                                               
+      26 +                                                               
+      27 +def after_execute(state: AgentState) -> str:                   
+      28 +    return retry_or_give_up(state) if state["error"] else "chec
+         +k_result"                                                      
+      29 +                                                               
+      30 +                                                               
+      31 +def after_check(state: AgentState) -> str:                     
+      32 +    return retry_or_give_up(state) if state["error"] else "answ
+         +er"                                                            
+      33 +                                                               
+      34 +                                                               
+      35 +# --- Graph ---------------------------------------------------
+         +------------------                                             
+      36 +                                                               
+      37  def build_graph(llm, engine: Engine, notes: str):
+      38      """Dependencies are bound here, so tests can pass a fake LL
+          M and a test database."""
+      39      schema = schema_as_text(engine)  # read once, not on every 
+          question
+     ...
+      42      graph.add_node("generate_sql", partial(
+      43          nodes.generate_sql, llm=llm, schema=schema, notes=notes
+          , dialect=engine.dialect.name,
+      44      ))
+      45 +    graph.add_node("validate_sql", nodes.validate_sql)         
+      46      graph.add_node("execute_sql", partial(nodes.execute_sql, en
+          gine=engine))
+      47 +    graph.add_node("check_result", nodes.check_result)         
+      48      graph.add_node("answer", partial(nodes.answer, llm=llm, not
+          es=notes))
+      49 +    graph.add_node("give_up", nodes.give_up)                   
+      50  
+      51      graph.add_edge(START, "generate_sql")
+      24 -    graph.add_edge("generate_sql", "execute_sql")              
+      25 -    graph.add_edge("execute_sql", "answer")                    
+      52 +    graph.add_edge("generate_sql", "validate_sql")             
+      53 +    graph.add_conditional_edges(                               
+      54 +        "validate_sql", after_validate, ["execute_sql", "genera
+         +te_sql", "give_up"])                                           
+      55 +    graph.add_conditional_edges(                               
+      56 +        "execute_sql", after_execute, ["check_result", "generat
+         +e_sql", "give_up"])                                            
+      57 +    graph.add_conditional_edges(                               
+      58 +        "check_result", after_check, ["answer", "generate_sql",
+         + "give_up"])                                                   
+      59      graph.add_edge("answer", END)
+      60 +    graph.add_edge("give_up", END)                             
+      61      return graph.compile()
+
+⏺ Update(src/main.py)
+  ⎿  Added 3 lines
+      29      print(f"SQL:\n{state['sql']}\n")
+      30      if state["results"]:
+      31          print(f"Rows returned: {len(state['results'][-1]['rows'
+          ])}\n")
+      32 +    else:  # give_up: attempts was not reset                   
+      33 +        print(f"Attempts: {state['attempts']}\n")              
+      34 +    print(f"Status: {state['status']}\n")                      
+      35      print(f"Answer:\n{state['answer']}")
+      36  
+      37  
+⏺ Update(CLAUDE.md)
+  ⎿  Added 5 lines, removed 1 line
+      35  - answer: write the answer only from the actual query results
+      36  
+      37  ## State (TypedDict)
+      38 -question, steps, step_index, sql, error, attempts, results, ans
+         -wer, status                                                    
+      38 +question, steps, step_index, sql, error, attempts, empty_retry_
+         +used, last_result, results,                                    
+      39 +answer, status                                                 
+      40 +- empty_retry_used: the one empty-result retry was used in the 
+         +current step                                                   
+      41 +- last_result: rows from execute_sql waiting for check_result; 
+         +only check_result appends to                                   
+      42 +  results, so results holds accepted results only              
+      43  
+      44  ## Rules
+      45  - DB-agnostic: no table or column names in agent code. The sche
+          ma is read from the
+
+⏺ Now the tests.
+
+⏺ Write(tests/test_sql_validation.py)
+  ⎿  Wrote 78 lines to tests/test_sql_validation.py
+       1 """Tests for validate_sql (one per rule) and is_empty_result. No
+          LLM, no database."""
+       2 import pytest
+       3 
+       4 from src.agent.nodes import is_empty_result
+       5 from src.agent.sql_validation import WRITE_KEYWORDS, validate_sq
+         l
+       6 
+       7 
+       8 # --- Rule: only SELECT or WITH --------------------------------
+     … +71 lines (~2 KB) (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The tests pass. Next I'll draw the graph and drive every path with a scripted
+  LLM from a scratchpad script. It's for verification only, not committed.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Every path routes correctly. Next I'll confirm the retry prompt carries the
+  error, then do the real-model runs from the plan.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The real-model runs did what the plan expects. Last step is the short security
+  note in docs that the plan promised.
+
+⏺ Write(docs/sql-validation-and-security.md)
+  ⎿  Wrote 48 lines to docs/sql-validation-and-security.md
+       1 # SQL validation and security
+       2 
+       3 ## What `validate_sql` checks (`src/agent/sql_validation.py`)
+       4 1. The query is not empty.
+       5 2. It starts with `SELECT` or `WITH`.
+       6 3. It is a single statement (no `;` except one at the end).
+       7 4. No write keywords: `INSERT, UPDATE, DELETE, DROP, ALTER, CREA
+         TE` (whole words, any case).
+       8 5. A `LIMIT 200` is added if the query has none.
+       9 
+     … +39 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Milestone 3 is done: bad SQL now goes back to the model with its error, empty
+  results get one retry, and after 3 failed attempts the user gets a clear
+  give-up message instead of a crash. All 57 tests pass, and I haven't committed
+  anything.
+
+  What's new
+  - The check function (src/agent/sql_validation.py): one pure validate_sql()
+    that returns the SQL with a LIMIT 200 added if missing, or raises ValueError
+    with a short reason. Text inside quotes and comments is ignored, so a value
+    like 'DROPPED' or a column like created_at doesn't trigger the
+    write-keyword rule.
+  - Nodes (src/agent/nodes.py):
+    - generate_sql counts attempts and, on a retry, adds the failed SQL and the
+      error to the prompt.
+    - validate_sql and execute_sql set error on failure. Database errors come
+      through as the short driver message (no such column: gpa).
+    - check_result accepts the rows, or uses the one empty-result retry, then
+      accepts a second empty result as the real answer.
+    - give_up writes the final message without calling the model.
+    - MAX_ATTEMPTS = 3 lives here.
+  - Graph (src/agent/graph.py): three conditional edges, each with a one-line
+    routing function that shares retry_or_give_up(). The drawn graph has exactly
+    the edges from the plan.
+  - State: two new keys, empty_retry_used and last_result. Only check_result
+    adds to results, so results holds accepted results only. I updated the state
+    list in CLAUDE.md.
+  - Prompts (src/agent/prompts.py): a retry section, the empty-result hint with
+    your rule that the model must never widen, loosen or remove a filter, and
+    the give-up message.
+  - Tests (tests/test_sql_validation.py): one test per rule, the write-keyword
+    rule run once for each of the 6 keywords, plus tests for the empty-result
+    check (COUNT = 0 doesn't count as empty).
+  - Docs (docs/sql-validation-and-security.md): why the keyword check isn't the
+    security boundary, and what actually is.
+
+  Checks
+  - Each path with a scripted fake model (a throwaway script, not committed):
+
+  | Case                                       | Result
+              |
+  |--------------------------------------------|--------------------------------
+  -------------|
+  | Normal question                            | answered on the first try
+              |
+  | Bad column, then a fix                     | answered on the second try
+              |
+  | Two statements, then a fix                 | answered on the second try
+              |
+  | Empty result twice                         | "The query returned no matching
+  records."   |
+  | Average over no grades (one row, all NULL) | same message, no model call for
+  the answer  |
+  | 3 failures                                 | give-up message with the last
+  SQL and error |
+    I also checked that the retry prompt contains the failed SQL and no such 
+    column: gpa.
+  - With the real model:
+    - "How many students are there?" → 30.
+    - "Which students got 100?" → no records. The final SQL still has grade = 
+      100, so the filter wasn't widened.
+    - "Average grade in Fall 2026?" → no records.
+    - "fall 2025" (lowercase) → real student names. With no tracing yet, I can't
+      tell whether that needed a retry or the model got the casing right the
+      first time. Milestone 4's trace files will show it.
+
+  Your docs/agent-sessions/README.md edit is left as it was. Before you commit,
+  run /export docs/agent-sessions/03-validation-retries.txt for this session.
+
+✻ Sautéed for 4m 35s · done 2:26 AM

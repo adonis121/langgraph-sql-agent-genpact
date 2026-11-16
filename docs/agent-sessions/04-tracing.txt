@@ -1,0 +1,620 @@
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~/Work/langgraph-sql-agent-genpact
+
+  Fable 5.2 is here for your longest and toughest coding tasks, and is included in your plan until November 16. It draws down usage faster than Opus 5.5. Switch with /model.
+  1 more notice hidden
+
+❯ /clear                                                                        
+
+❯ /model opus                                                                   
+  ⎿  Set model to Opus 5.5 and saved as your default for new sessions
+
+❯ read CLAUDE.md. milestone 3 is done (validation, retries, give_up).           
+                                                                                
+  milestone 4: tracing. the homework says tracing is mandatory and must show:   
+  user input -> graph nodes -> generated sql -> db results -> final answer.     
+  propose a plan, no code yet.                                                  
+                                                                                
+  scope:                                                                        
+  langsmith: it already works from the env vars in .env, but give each run a    
+  clear name, tags and metadata (question, run_id, model) so runs are easy to   
+  find                                                                          
+  local trace file for every run: traces/<run_id>.jsonl, one line per node,     
+  written while the graph runs (graph.stream with stream_mode="updates")        
+  each line has: run_id, timestamp, node name, how long the node took, and what 
+  the node changed in the state (sql, error, attempts, rows)                    
+  the first line is the question and the last line is the final answer and      
+  status                                                                        
+  big results are cut in the trace (for example the first 20 rows plus the      
+  total row count), so files stay small                                         
+  the tracing code lives in its own module in src/, the nodes dont know about   
+  tracing                                                                       
+  a small command to read a trace file and print it as a readable timeline:     
+  python -m src.show_trace traces/<run_id>.jsonl                                
+  the cli prints the run_id and the trace file path at the end                  
+  if langsmith is not configured, everything still works with only the local    
+  file                                                                          
+                                                                                
+  not in this milestone: planner, fake llm agent tests                          
+                                                                                
+  also tell me:                                                                 
+  how a trace looks for a question that needed a retry                          
+  which trace files we keep in the repo as examples, and which ones we ignore   
+  in git                                                                        
+
+  Listed 1 directory, ran 1 shell command (ctrl+o to expand)
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ Small fix to a leftover in the tags line:
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ User approved Claude's plan
+  ⎿  Plan saved to: 
+     ~/.claude/plans/pasted-content-id-1be5-read-claude-md-dynamic-papert.md · 
+     /plan to edit
+     Milestone 4 — Tracing
+
+     Context
+
+     Tracing is mandatory: it must show user input -> graph nodes -> generated
+     SQL -> DB results -> final answer.
+     Today src/main.py calls graph.invoke(); LangSmith picks up runs from .env
+     (LANGSMITH_TRACING,
+     LANGSMITH_PROJECT) but runs have default names and no metadata, and nothing
+     is saved in the repo.
+     Goal: every run gets a findable LangSmith run AND a small local
+     traces/<run_id>.jsonl, written by a
+     separate tracing module while the graph streams. Nodes stay unchanged.
+
+     Design
+
+     1. src/tracing.py (new, the only place that knows about tracing)
+
+     - run_traced(graph, state, *, model, trace_dir="traces") -> (final_state, 
+       run_id, path)
+       - run_id = uuid4(); the same id is passed to LangSmith as
+         config["run_id"], so the local file
+         name equals the LangSmith run id (search it in the UI or open it
+         directly).
+       - LangSmith config: run_name="university-qa", tags=["sql-agent"],
+         metadata={"question", "run_id", "model"}. If LangSmith env vars are
+         missing, this config is simply
+         ignored by LangChain — no branches needed; the local file is always
+         written.
+       - graph.stream(state, config, stream_mode=["updates", "values"]):
+         - "updates" chunk {node: changes} → write one line
+         - "values" chunk → keep the latest as the final state (so we don't
+           re-implement the results reducer)
+       - Duration: time between consecutive update chunks (time.perf_counter()).
+         Each chunk arrives right after
+         its node finishes and nodes run sequentially, so this is the node's
+         time (plus tiny routing overhead).
+       - Lines written and flushed one at a time (open(..., "a")), so a crash
+         mid-run still leaves a partial trace.
+     - Line format (json.dumps(..., default=str) for dates/Decimals):
+       - first: {"run_id", "ts", "event": "start", "question", "model"}
+       - per node: {"run_id", "ts", "event": "node", "node", "duration_ms", 
+         "changes": {...}}
+       - last: {"run_id", "ts", "event": "end", "status", "answer", "total_ms"}
+     - compact(changes): any rows list (in last_result and in results entries)
+       is cut to the first
+       MAX_TRACE_ROWS = 20 and gets "row_count": <total> + "truncated": true
+       when cut. Other keys as-is.
+       No table/column names in here — it only knows the state keys, so it stays
+       DB-agnostic.
+
+     2. src/show_trace.py (new) — python -m src.show_trace traces/<run_id>.jsonl
+
+     Prints a readable timeline: header with question/model/run_id, then one
+     block per node
+     ([3] validate_sql  2 ms) showing SQL, error, attempts, and rows as a small
+     table (reuse
+     prompts.format_rows_as_table from src/agent/prompts.py), then status +
+     answer + total time.
+
+     3. src/main.py
+
+     ask() uses run_traced(...) instead of graph.invoke(...), passes
+     os.getenv("OPENAI_MODEL").
+     At the end the CLI prints Run id: ... and Trace: traces/<run_id>.jsonl.
+
+     4. Repo / git
+
+     - .gitignore: traces/*.jsonl (everyday runs ignored).
+     - Kept examples: traces/examples/ (tracked), copied by hand from real runs,
+       3 files:
+       simple-success.jsonl, retry-then-success.jsonl, give-up.jsonl (+ a short
+       traces/examples/README.md
+       saying which question produced each). Later the debugging bug-trace from
+       CLAUDE.md goes here too.
+     - No new package (langsmith already in requirements.txt).
+
+     5. Tests (tests/test_tracing.py, no LLM, no graph)
+
+     - compact truncates >20 rows and adds row_count; leaves small results
+       unchanged.
+     - Writing a trace from a hand-made list of update chunks gives
+       start/node/end lines in order, valid JSON.
+       (The fake-LLM end-to-end tests stay in their own milestone, as agreed.)
+
+     6. Docs
+
+     Short section in docs/ (e.g. docs/tracing.md): what is traced, where, how
+     to read it, example output.
+
+     Example: a run that needed a retry (shown by show_trace)
+
+     Run 7f3c…  model=gpt-4o-mini
+     Q: Average grade per course in Fall 2024?
+
+     [1] generate_sql   812 ms  attempts=1
+         SELECT c.title, AVG(e.grade) FROM enrollments e JOIN courses c ... 
+     WHERE o.semester = 'Fall 2024'
+     [2] validate_sql     1 ms  ok (LIMIT 100 added)
+     [3] execute_sql      3 ms  ERROR Database error: no such column: o.semester
+     [4] generate_sql   790 ms  attempts=2   <- retry, prompt included the error
+     above
+         SELECT c.title, AVG(e.grade) ... WHERE o.term = 'Fall' AND o.year = 
+     2024 ...
+     [5] validate_sql     1 ms  ok
+     [6] execute_sql      2 ms  6 rows
+     [7] check_result     0 ms  accepted (attempts reset to 0)
+     [8] answer         640 ms
+
+     status=done  total=2.3 s
+     Answer: ...
+     (Column names above are illustrative; the real example file comes from an
+     actual run.)
+     An empty-result retry looks similar: check_result  error=<EMPTY_RETRY_HINT>
+     empty_retry_used=true → back to generate_sql.
+
+     Files
+
+     - new: src/tracing.py, src/show_trace.py, tests/test_tracing.py,
+       docs/tracing.md, traces/examples/*
+     - changed: src/main.py, .gitignore
+     - unchanged: all nodes, graph, state
+
+     Verification
+
+     1. pytest — all green (existing + new tracing tests).
+     2. python -m src.main "How many students are there?" → prints run id +
+        trace path; file has start, 5 node lines, end.
+     3. python -m src.show_trace traces/<id>.jsonl → readable timeline.
+     4. LangSmith: run named university-qa with tags/metadata, its id = the file
+        name.
+     5. Run with LANGSMITH_TRACING=false → still works, local file still
+        written.
+     6. Provoke a retry (a question that commonly triggers a wrong column) and a
+        give-up; copy them to traces/examples/.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Write(src/tracing.py)
+  ⎿  Wrote 104 lines to src/tracing.py
+       1 """Run the graph with tracing: LangSmith (if configured) plus a 
+         local traces/<run_id>.jsonl.
+       2 
+       3 The nodes know nothing about this module. We stream the graph an
+         d write one JSON line per
+       4 node from the state changes it returned, so the file shows the f
+         ull path:
+       5 question -> nodes -> SQL -> DB rows -> answer.
+       6 """
+       7 import json
+     … +97 lines (ctrl+o to expand)
+
+⏺ Write(src/show_trace.py)
+  ⎿  Wrote 70 lines to src/show_trace.py
+       1 """Print a trace file as a readable timeline: python -m src.show
+         _trace traces/<run_id>.jsonl"""
+       2 import json
+       3 import sys
+       4 import textwrap
+       5 from pathlib import Path
+       6 
+       7 from src.agent.prompts import format_rows_as_table
+       8 
+       9 
+     … +61 lines (ctrl+o to expand)
+
+⏺ Bash(python - <<'EOF'
+      from pathlib import Path…)
+  ⎿  diff --git a/src/main.py b/src/main.py
+     index 0579d1d..64ca32e 100644
+     --- a/src/main.py
+     … +46 lines (ctrl+o to expand)
+  ⎿  Updated .gitignore (+3 -0)
+      4  *.db
+      5  .DS_Store
+      6  .pytest_cache/
+      7 +                                                                
+      8 +# Local run traces; curated examples live in traces/examples/   
+      9 +traces/*.jsonl                                                  
+  ⎿  Updated src/main.py (+9 -4)
+      1  """CLI: python -m src.main "How many students are there?" """
+      2 +import os                                                       
+      3  import sys
+      4  from pathlib import Path
+      5  
+     ...
+      10  from src.agent.state import initial_state
+      11  from src.db.build_db import DEFAULT_DB_PATH
+      12  from src.db.database import connect_readonly
+      13 +from src.tracing import run_traced                             
+      14  
+      15  NOTES_PATH = Path(__file__).resolve().parents[1] / "config" / "
+          university_notes.md"
+      16  
+      17  
+      16 -def ask(question: str) -> dict:                                
+      18 +def ask(question: str):                                        
+      19 +    """Returns (final_state, run_id, trace_path)."""           
+      20      engine = connect_readonly(DEFAULT_DB_PATH)
+      21      graph = build_graph(get_llm(), engine, NOTES_PATH.read_text
+          ())
+      19 -    return graph.invoke(initial_state(question))               
+      22 +    return run_traced(graph, initial_state(question), model=os.
+         +getenv("OPENAI_MODEL"))                                        
+      23  
+      24  
+      25  def main() -> None:
+     ...
+      27          sys.exit('Usage: python -m src.main "your question"')
+      28  
+      29      load_dotenv()
+      27 -    state = ask(sys.argv[1])                                   
+      30 +    state, run_id, trace_path = ask(sys.argv[1])               
+      31  
+      32      print(f"SQL:\n{state['sql']}\n")
+      33      if state["results"]:
+     ...
+      35      else:  # give_up: attempts was not reset
+      36          print(f"Attempts: {state['attempts']}\n")
+      37      print(f"Status: {state['status']}\n")
+      35 -    print(f"Answer:\n{state['answer']}")                       
+      38 +    print(f"Answer:\n{state['answer']}\n")                     
+      39 +    print(f"Run id: {run_id}")                                 
+      40 +    print(f"Trace:  {trace_path.relative_to(Path.cwd()) if trac
+         +e_path.is_relative_to(Path.cwd()) else trace_path}")           
+      41  
+      42  
+     … 1 more lines (ctrl+o to expand)
+
+⏺ That last print line is clunky; simplify it.
+
+⏺ Bash(python - <<'EOF'
+      from pathlib import Path…)
+  ⎿  if __name__ == "__main__":
+         main()
+  ⎿  Updated src/main.py (+2 -1)
+      37      print(f"Status: {state['status']}\n")
+      38      print(f"Answer:\n{state['answer']}\n")
+      39      print(f"Run id: {run_id}")
+      40 -    print(f"Trace:  {trace_path.relative_to(Path.cwd()) if trac
+         -e_path.is_relative_to(Path.cwd()) else trace_path}")           
+      40 +    print(f"Trace:  {trace_path}")                             
+      41 +    print(f"View:   python -m src.show_trace {trace_path}")    
+      42  
+      43  
+      44  if __name__ == "__main__":
+
+⏺ Now the tests:
+
+⏺ Write(tests/test_tracing.py)
+  ⎿  Wrote 93 lines to tests/test_tracing.py
+       1 """Tracing without an LLM: row truncation, the trace file format
+         , and the timeline printer."""
+       2 import json
+       3 import uuid
+       4 
+       5 from src.show_trace import format_trace, load_trace
+       6 from src.tracing import MAX_TRACE_ROWS, TraceWriter, compact, ru
+         n_traced
+       7 
+       8 
+     … +85 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Tests pass. Now real runs (these call OpenAI and LangSmith using your .env).
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Works. The absolute path is noisy; I'll print it relative to the current
+  directory.
+
+⏺ Bash(python - <<'EOF'
+      from pathlib import Path…)
+  ⎿  Run a81d48bb-ba94-44b7-b5c4-c8ba7242f3ed  model=gpt-4.1-mini
+     Q: How many students are there?
+     … +22 lines (ctrl+o to expand)
+  ⎿  Updated src/main.py (+1 -0)
+      37      print(f"Status: {state['status']}\n")
+      38      print(f"Answer:\n{state['answer']}\n")
+      39      print(f"Run id: {run_id}")
+      40 +    trace_path = os.path.relpath(trace_path)                   
+      41      print(f"Trace:  {trace_path}")
+      42      print(f"View:   python -m src.show_trace {trace_path}")
+      43  
+
+⏺ Now I'll try to produce real retry and give-up runs.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ I got a real empty-result retry. Now I'll try two questions that tempt the
+  model to invent columns, to get an error retry:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The model didn't make a SQL error on these, so I'm not burning more API calls
+  on it. I'll keep the two real examples and write the docs.
+⏺ Bash(mkdir -p traces/examples && cp
+      traces/a81d48bb-ba94-44b7-b5c4-c8ba7242f3ed.jsonl
+      traces/examples/simple-success.jsonl && cp
+      traces/b62d6b7e-8bfc-404b-84e1-5483f…)
+  ⎿  Run b62d6b7e-8bfc-404b-84e1-5483f1b62966  model=gpt-4.1-mini
+     Q: Which students took the course Quantum Basket Weaving?
+     … +65 lines (ctrl+o to expand)
+  ⎿  Created traces/examples/empty-result-retry.jsonl (+11 -0)
+       1 +{"run_id": "b62d6b7e-8bfc-404b-84e1-5483f1b62966", "ts": "2026-
+         +11-16T01:32:10.248167+00:00", "event": "start", "question": "Wh
+         +ich students took the course Quantum Basket Weaving?", "model":
+         + "gpt-4.1-mini"}                                               
+       2 +{"run_id": "b62d6b7e-8bfc-404b-84e1-5483f1b62966", "ts": "2026-
+         +11-16T01:32:11.576416+00:00", "event": "node", "node": "generat
+         +e_sql", "duration_ms": 1328.1, "changes": {"sql": "SELECT DISTI
+         +NCT students.id, students.name\nFROM students\nJOIN enrollments
+         + ON students.id = enrollments.student_id\nJOIN course_offerings
+         + ON enrollments.offering_id = course_offerings.id\nJOIN courses
+         + ON course_offerings.course_id = courses.id\nWHERE courses.titl
+         +e = 'Quantum Basket Weaving';", "attempts": 1}}                
+       3 +{"run_id": "b62d6b7e-8bfc-404b-84e1-5483f1b62966", "ts": "2026-
+         +11-16T01:32:11.577241+00:00", "event": "node", "node": "validat
+         +e_sql", "duration_ms": 0.8, "changes": {"sql": "SELECT DISTINCT
+         + students.id, students.name\nFROM students\nJOIN enrollments ON
+         + students.id = enrollments.student_id\nJOIN course_offerings ON
+         + enrollments.offering_id = course_offerings.id\nJOIN courses ON
+         + course_offerings.course_id = courses.id\nWHERE courses.title =
+         + 'Quantum Basket Weaving'\nLIMIT 200", "error": null}}         
+       4 +{"run_id": "b62d6b7e-8bfc-404b-84e1-5483f1b62966", "ts": "2026-
+         +11-16T01:32:11.579262+00:00", "event": "node", "node": "execute
+         +_sql", "duration_ms": 2.0, "changes": {"last_result": {"columns
+         +": ["id", "name"], "rows": [], "row_count": 0}, "error": null}}
+       5 +{"run_id": "b62d6b7e-8bfc-404b-84e1-5483f1b62966", "ts": "2026-
+         +11-16T01:32:11.579853+00:00", "event": "node", "node": "check_r
+         +esult", "duration_ms": 0.6, "changes": {"error": "Empty result:
+         + the query ran but returned no rows (or only NULLs).\nThis may 
+         +be the correct answer. Check only for mistakes:\n- a literal va
+         +lue spelled or cased differently from the data (see business ru
+         +les)\n- a wrong join path or wrong column\nDo NOT change the me
+         +aning of the question: never widen, loosen or remove a filter\n
+         +(e.g. do not turn \"= 100\" into \">= 90\"). If the query alrea
+         +dy matches the question,\nreturn it unchanged.", "empty_retry_u
+         +sed": true}}                                                   
+       6 +{"run_id": "b62d6b7e-8bfc-404b-84e1-5483f1b62966", "ts": "2026-
+         +11-16T01:32:12.898080+00:00", "event": "node", "node": "generat
+         +e_sql", "duration_ms": 1318.2, "changes": {"sql": "SELECT DISTI
+         +NCT students.id, students.name\nFROM students\nJOIN enrollments
+         + ON students.id = enrollments.student_id\nJOIN course_offerings
+         + ON enrollments.offering_id = course_offerings.id\nJOIN courses
+         + ON course_offerings.course_id = courses.id\nWHERE courses.titl
+         +e = 'Quantum Basket Weaving'", "attempts": 2}}                 
+       7 +{"run_id": "b62d6b7e-8bfc-404b-84e1-5483f1b62966", "ts": "2026-
+         +11-16T01:32:12.899704+00:00", "event": "node", "node": "validat
+         +e_sql", "duration_ms": 1.6, "changes": {"sql": "SELECT DISTINCT
+         + students.id, students.name\nFROM students\nJOIN enrollments ON
+         + students.id = enrollments.student_id\nJOIN course_offerings ON
+         + enrollments.offering_id = course_offerings.id\nJOIN courses ON
+         + course_offerings.course_id = courses.id\nWHERE courses.title =
+         + 'Quantum Basket Weaving'\nLIMIT 200", "error": null}}         
+       8 +{"run_id": "b62d6b7e-8bfc-404b-84e1-5483f1b62966", "ts": "2026-
+         +11-16T01:32:12.901959+00:00", "event": "node", "node": "execute
+         +_sql", "duration_ms": 2.3, "changes": {"last_result": {"columns
+         +": ["id", "name"], "rows": [], "row_count": 0}, "error": null}}
+       9 +{"run_id": "b62d6b7e-8bfc-404b-84e1-5483f1b62966", "ts": "2026-
+         +11-16T01:32:12.902933+00:00", "event": "node", "node": "check_r
+         +esult", "duration_ms": 1.0, "changes": {"results": [{"step_inde
+         +x": 0, "step": "Which students took the course Quantum Basket W
+         +eaving?", "sql": "SELECT DISTINCT students.id, students.name\nF
+         +ROM students\nJOIN enrollments ON students.id = enrollments.stu
+         +dent_id\nJOIN course_offerings ON enrollments.offering_id = cou
+         +rse_offerings.id\nJOIN courses ON course_offerings.course_id = 
+         +courses.id\nWHERE courses.title = 'Quantum Basket Weaving'\nLIM
+         +IT 200", "columns": ["id", "name"], "rows": [], "row_count": 0}
+         +], "last_result": null, "error": null, "attempts": 0, "empty_re
+         +try_used": false}}                                             
+      10 +{"run_id": "b62d6b7e-8bfc-404b-84e1-5483f1b62966", "ts": "2026-
+         +11-16T01:32:12.903674+00:00", "event": "node", "node": "answer"
+         +, "duration_ms": 0.7, "changes": {"answer": "The query returned
+         + no matching records.", "status": "done"}}                     
+      11 +{"run_id": "b62d6b7e-8bfc-404b-84e1-5483f1b62966", "ts": "2026-
+         +11-16T01:32:12.904897+00:00", "event": "end", "status": "done",
+         + "answer": "The query returned no matching records.", "total_ms
+         +": 2656.5}                                                     
+  ⎿  Created traces/examples/simple-success.jsonl (+7 -0)
+      1 +{"run_id": "a81d48bb-ba94-44b7-b5c4-c8ba7242f3ed", "ts": "2026-1
+        +1-16T01:31:55.649069+00:00", "event": "start", "question": "How 
+        +many students are there?", "model": "gpt-4.1-mini"}             
+      2 +{"run_id": "a81d48bb-ba94-44b7-b5c4-c8ba7242f3ed", "ts": "2026-1
+        +1-16T01:31:56.575247+00:00", "event": "node", "node": "generate_
+        +sql", "duration_ms": 926.0, "changes": {"sql": "SELECT COUNT(*) 
+        +FROM students;", "attempts": 1}}                                
+      3 +{"run_id": "a81d48bb-ba94-44b7-b5c4-c8ba7242f3ed", "ts": "2026-1
+        +1-16T01:31:56.577130+00:00", "event": "node", "node": "validate_
+        +sql", "duration_ms": 1.9, "changes": {"sql": "SELECT COUNT(*) FR
+        +OM students\nLIMIT 200", "error": null}}                        
+      4 +{"run_id": "a81d48bb-ba94-44b7-b5c4-c8ba7242f3ed", "ts": "2026-1
+        +1-16T01:31:56.579650+00:00", "event": "node", "node": "execute_s
+        +ql", "duration_ms": 2.5, "changes": {"last_result": {"columns": 
+        +["COUNT(*)"], "rows": [[30]], "row_count": 1}, "error": null}}  
+      5 +{"run_id": "a81d48bb-ba94-44b7-b5c4-c8ba7242f3ed", "ts": "2026-1
+        +1-16T01:31:56.580633+00:00", "event": "node", "node": "check_res
+        +ult", "duration_ms": 1.0, "changes": {"results": [{"step_index":
+        + 0, "step": "How many students are there?", "sql": "SELECT COUNT
+        +(*) FROM students\nLIMIT 200", "columns": ["COUNT(*)"], "rows": 
+        +[[30]], "row_count": 1}], "last_result": null, "error": null, "a
+        +ttempts": 0, "empty_retry_used": false}}                        
+      6 +{"run_id": "a81d48bb-ba94-44b7-b5c4-c8ba7242f3ed", "ts": "2026-1
+        +1-16T01:31:57.420621+00:00", "event": "node", "node": "answer", 
+        +"duration_ms": 840.0, "changes": {"answer": "There are 30 studen
+        +ts.", "status": "done"}}                                        
+      7 +{"run_id": "a81d48bb-ba94-44b7-b5c4-c8ba7242f3ed", "ts": "2026-1
+        +1-16T01:31:57.423388+00:00", "event": "end", "status": "done", "
+        +answer": "There are 30 students.", "total_ms": 1774.1}          
+
+⏺ The retry kept the filter the same, which is what the "retries must preserve
+  meaning" rule asks for. Now the docs:
+
+⏺ Bash(cat > traces/examples/README.md <<'EOF'
+      # Example traces…)
+  ⎿  63 passed in 0.15s
+  ⎿  Created docs/tracing.md (+53 -0)
+       1 +# Tracing                                                      
+       2 +                                                               
+       3 +Every run is traced in two places, both keyed by the same `run_
+         +id`:                                                           
+       4 +                                                               
+       5 +1. **LangSmith** (when `LANGSMITH_TRACING` / `LANGSMITH_API_KEY
+         +` are set in `.env`).                                          
+       6 +   Runs are named `university-qa`, tagged `sql-agent`, with met
+         +adata `question`, `run_id`, `model`.                           
+       7 +   The LangSmith run id *is* the local file name, so the two ar
+         +e easy to match.                                               
+       8 +   Without LangSmith config everything still works; only the lo
+         +cal file is written.                                           
+       9 +2. **Local file** `traces/<run_id>.jsonl`, always written. This
+         + is what is kept in the repo.                                  
+      10 +                                                               
+      11 +## How it works                                                
+      12 +`src/tracing.py` runs the graph with `graph.stream(..., stream_
+         +mode=["updates", "values"])`.                                  
+      13 +- each `"updates"` chunk is `{node_name: changes}` - exactly wh
+         +at the node returned - and becomes one line                    
+      14 +- the last `"values"` chunk is the final state, returned to the
+         + CLI                                                           
+      15 +                                                               
+      16 +The nodes know nothing about tracing: what a node returns is wh
+         +at gets traced.                                                
+      17 +Each line is flushed right away, so a crash still leaves a part
+         +ial trace.                                                     
+      18 +                                                               
+      19 +Node duration = time between two consecutive updates (nodes run
+         + one at a time).                                               
+      20 +                                                               
+      21 +## File format (one JSON object per line)                      
+      22 +```                                                            
+      23 +{"run_id", "ts", "event": "start", "question", "model"}        
+      24 +{"run_id", "ts", "event": "node",  "node", "duration_ms", "chan
+         +ges": {...}}   # one per node                                  
+      25 +{"run_id", "ts", "event": "end",   "status", "answer", "total_m
+         +s"}                                                            
+      26 +```                                                            
+      27 +`changes` holds only the state keys the node changed (`sql`, `e
+         +rror`, `attempts`, `last_result`,                              
+      28 +`results`, ...). Row lists are cut to the first 20 rows; `row_c
+         +ount` always has the total and                                 
+      29 +`truncated: true` marks a cut result.                          
+      30 +                                                               
+      31 +## Reading a trace                                             
+      32 +```                                                            
+      33 +python -m src.main "How many students are there?"     # prints 
+         +Run id + Trace path                                            
+      34 +python -m src.show_trace traces/<run_id>.jsonl                 
+      35 +```                                                            
+      36 +                                                               
+      37 +## A run with a retry                                          
+      38 +See `traces/examples/empty-result-retry.jsonl`. The timeline re
+         +ads:                                                           
+      39 +```                                                            
+      40 +[3] execute_sql     0 rows                                     
+     … 13 more lines (ctrl+o to expand)
+  ⎿  Created traces/examples/README.md (+14 -0)
+       1 +# Example traces                                               
+       2 +                                                               
+       3 +Real runs (gpt-4.1-mini), copied from `traces/` by hand. Everyd
+         +ay runs in `traces/*.jsonl`                                    
+       4 +are git-ignored; only these curated examples are committed.    
+       5 +                                                               
+       6 +| File | Question | What it shows |                            
+       7 +|---|---|---|                                                  
+       8 +| `simple-success.jsonl` | How many students are there? | Happy
+         + path: generate -> validate (LIMIT added) -> execute -> check -
+         +> answer |                                                     
+       9 +| `empty-result-retry.jsonl` | Which students took the course Q
+         +uantum Basket Weaving? | Empty result -> one retry with the hin
+         +t -> model keeps the same filter -> second empty result accepte
+         +d -> "no matching records" without an LLM call |               
+      10 +                                                               
+      11 +View one with: `python -m src.show_trace traces/examples/empty-
+         +result-retry.jsonl`                                            
+      12 +                                                               
+      13 +Still to add when they happen in real runs: an SQL-error retry,
+         + a give_up, and the bug                                        
+      14 +found through a trace (see CLAUDE.md, debuggability).          
+
+⏺ Finally, I'll check that LangSmith received the run under the same id, with
+  its name, tags and metadata:
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Milestone 4 is in place and all 63 tests pass. LangSmith received a real run
+  with the right name, tags and metadata. A run with LANGSMITH_TRACING=false
+  still worked and still wrote its local trace file. Nothing is committed yet.
+
+  What was built
+  - src/tracing.py: runs the graph and writes traces/<run_id>.jsonl while it
+    runs. The file has a start line with the question, one line per node (time,
+    duration, what the node changed), and an end line with the status and
+    answer. Results are cut to the first 20 rows, with row_count keeping the
+    real total. The nodes, graph and state are unchanged.
+  - LangSmith: each run is named university-qa, tagged sql-agent, and carries
+    the question, run id and model. Its LangSmith id is the same as the local
+    file name, so you can look a trace up by its file name.
+  - python -m src.show_trace <file>: prints a trace as a numbered timeline with
+    SQL, errors, attempts, rows as small tables, and the answer.
+  - CLI: now prints the run id, the trace path and the show_trace command to
+    view it.
+  - Also added: tests/test_tracing.py (no LLM; a fake graph replays stream
+    chunks) and docs/tracing.md.
+
+  How a trace looks for a question that needed a retry (from a real run, "Which
+  students took the course Quantum Basket Weaving?"):
+  [3] execute_sql   0 rows
+  [4] check_result  ERROR: Empty result ... empty_retry_used=True   -> back to 
+  generate_sql
+  [5] generate_sql  attempts=2   same WHERE filter as before
+  [7] execute_sql   0 rows
+  [8] check_result  attempts=0, accepted result (0 rows)
+  [9] answer        "The query returned no matching records."  (0.7 ms, no LLM 
+  call)
+  The retry kept the same filter rather than loosening it, so the "a retry must
+  not change the meaning" rule held. An SQL-error retry looks the same, except
+  the ERROR: line appears on validate_sql or execute_sql. After 3 attempts the
+  next node is give_up and the run ends with status=error.
+
+  Which trace files are kept in git
+  - Ignored: traces/*.jsonl, i.e. every everyday run.
+  - Kept: traces/examples/, which has two real runs, simple-success.jsonl and
+    empty-result-retry.jsonl, plus a README saying which question produced each.
+
+  Missing: there is no example trace yet for an SQL-error retry or a give_up. I
+  tried several questions meant to make the model invent columns, but
+  gpt-4.1-mini wrote valid SQL every time. I didn't want to fake an example.
+  They can be added once one happens in a real run.
+
+  For the planner milestone: "Delete all students who failed a course" wasn't
+  blocked. The model wrote a SELECT, and the answer was "Delete students with
+  these IDs: …". The data was safe because validation and the read-only
+  connection held, but the answer reads badly. The planner should reject
+  questions like this instead.
+
+  Next step is exporting this session to docs/agent-sessions/04-tracing.txt
+  (after checking it for API keys). Then I can commit when you say so.
+
+✻ Baked for 3m 19s · done 2:33 AM

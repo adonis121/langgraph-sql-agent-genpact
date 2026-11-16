@@ -35,7 +35,11 @@ plan -> generate_sql -> validate_sql -> execute_sql -> check_result -> answer
 - answer: write the answer only from the actual query results
 
 ## State (TypedDict)
-question, steps, step_index, sql, error, attempts, results, answer, status
+question, steps, step_index, sql, error, attempts, empty_retry_used, last_result, results,
+answer, status
+- empty_retry_used: the one empty-result retry was used in the current step
+- last_result: rows from execute_sql waiting for check_result; only check_result appends to
+  results, so results holds accepted results only
 
 ## Rules
 - DB-agnostic: no table or column names in agent code. The schema is read from the
