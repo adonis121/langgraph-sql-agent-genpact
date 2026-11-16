@@ -1,0 +1,7 @@
+langgraph
+langchain-openai
+langsmith
+sqlalchemy
+pydantic
+python-dotenv
+pytest

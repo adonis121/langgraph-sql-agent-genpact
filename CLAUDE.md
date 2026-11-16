@@ -53,6 +53,27 @@ question, steps, step_index, sql, error, attempts, results, answer, status
 - Keep the code simple, modular and easy to explain in an interview.
   Clear names, short functions, comments only where the reason isn't obvious.
 
+## Evaluation criteria (from the homework) - every decision should serve these
+correctness, clarity of design, ability to handle complex questions, quality of
+LangGraph usage, traceability and debuggability, code cleanliness and structure,
+ability to explain and defend the system. "Small, working, explainable" beats big.
+
+## Planned additions driven by the criteria
+- Ambiguous questions: pause the graph with LangGraph interrupt() + a checkpointer,
+  ask the user, and resume with their answer (milestone 5).
+- Correctness: an eval set of 8-10 questions with hand-written reference SQL; compare
+  the agent's RESULTS (not SQL text) to the reference results (milestone 6).
+- Debuggability: document at least one real bug found through a trace in docs/
+  (what went wrong, how the trace showed it, the fix) and add it to the eval set.
+- Validation: one clear validate_sql function with a test per rule.
+- Not in scope: web UI, multiple databases, anything we can't explain.
+
+## Submission
+- Public GitHub repo: langgraph-sql-agent-genpact
+- Session history with the coding agent is REQUIRED: export every Claude Code session
+  with /export to docs/agent-sessions/NN-<milestone>.txt (check for API keys first).
+- Keep requirements.txt up to date when adding a package.
+
 ## Folders
 db/        schema.sql, seed.sql
 src/       agent (graph, nodes, state, prompts), db layer, tracing
