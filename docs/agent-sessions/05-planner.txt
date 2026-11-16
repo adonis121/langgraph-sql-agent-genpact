@@ -1,0 +1,1025 @@
+ ▐▛███▛█   Claude Code v2.1.325
+▝▜██████▀  Opus 5.5 · Claude Pro
+ ▝▝   ▝▝   ~/Work/langgraph-sql-agent-genpact
+
+  Fable 5.2 is here for your longest and toughest coding tasks, and is included in your plan until November 16. It draws down usage faster than Opus 5.5. Switch with /model.
+  1 more notice hidden
+
+❯ /clear                                                                        
+
+❯ read CLAUDE.md. milestones 1 to 4 are done (db, graph, validation and         
+  retries, tracing).                                                            
+                                                                                
+  milestone 5: planner, multi-step and db agnostic. propose a plan, no code     
+  yet.                                                                          
+                                                                                
+  scope:                                                                        
+  a plan node at the start that decides one of three things: answerable, needs  
+  clarification, or out of scope                                                
+  out of scope means requests to change data (delete, update, insert) or        
+  questions that have nothing to do with the database. they end with a short    
+  clear message, no sql is run. example from milestone 4: "Delete all students  
+  who failed a course" produced a SELECT and the answer "Delete students with   
+  these IDs", that should be rejected here                                      
+  answerable questions are split into 1 to 3 steps. simple questions stay 1     
+  step                                                                          
+  after check_result accepts a step, go to the next step or to answer after the 
+  last one. later steps get the results of earlier steps in the prompt          
+  needs clarification: pause the graph with LangGraph interrupt() and a         
+  checkpointer, ask the user one question, and continue with their answer. the  
+  cli asks the question and resumes                                             
+  clarification is only for questions that are vague in themselves, like "who   
+  is the best teacher", not for duplicate names                                 
+  the answer node uses the results of all steps                                 
+  db agnostic: the db url and the notes file path come from .env or config,     
+  with defaults. nothing in src/agent knows about the university                
+  the planner output is structured (steps, decision, reason) so it shows        
+  clearly in the trace                                                          
+                                                                                
+  not in this milestone: fake llm agent tests, eval set                         
+                                                                                
+  also tell me:                                                                 
+  how the graph looks now (draw it as text)                                     
+  how a multi-step question flows, using "which teacher had the highest average 
+  grade in Fall 2025, and which students failed a course taught by that         
+  teacher"                                                                      
+  what we need to change to run this on another database                        
+  if interrupt makes things much more complex, tell me, and we keep a simple    
+  clarifying message instead                                                    
+
+  Ran 3 shell commands (ctrl+o to expand)
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+⏺ I've finished reading the code and written the milestone 5 plan. Here's the
+  short version before I ask you to approve it.
+
+  Graph after M5
+  START -> plan --answerable--> generate_sql -> validate_sql -> execute_sql -> 
+  check_result
+            |  ^                    ^   (retry loop as today: max 3 per step, 
+  then give_up)   |
+            |  +-- ask_user <-- needs_clarification (first time)       more 
+  steps left --+
+            |      [interrupt()]                                    last step 
+  accepted -> answer -> END
+            +-- out_of_scope, or still unclear after one reply --> decline -> 
+  END   (no SQL runs)
+
+  Main decisions
+  - Planner: gives a structured result (decision, reason, steps,
+    clarifying_question) and stores all of it in state, so it shows in the
+    trace. "Delete all students who failed..." goes to decline, which runs no
+    SQL.
+  - Interrupt: not much more complex, so I recommend doing it. It needs a
+    separate ask_user node with no LLM call, InMemorySaver (already in
+    langgraph, no new package), and a resume loop of about 15 lines in
+    run_traced. The node has to be separate because LangGraph re-runs the
+    interrupted node from the start on resume; inside plan, the LLM would be
+    called again and might decide differently.
+  - Multi-step: check_result moves step_index forward when it accepts a step.
+    generate_sql sees the SQL and result table of earlier steps. answer sees
+    every step.
+  - Your example question:
+    - Step 1 finds the teacher with the highest average in Fall 2025.
+    - Step 2 finds students who failed any course by that teacher, using the
+      teacher id from step 1. It isn't limited to Fall 2025, because the
+      question doesn't say so.
+    - If two teachers tie, step 2 uses both ids.
+  - DB-agnostic:
+    - DATABASE_URL and NOTES_PATH come from the env, with defaults, in
+      src/config.py.
+    - I'll remove the "university" wording from the prompts.
+    - connect_readonly will take a URL. It stays read-only for SQLite and raises
+      a clear error for other databases.
+  - Running on another database:
+    - Another SQLite file: no code change, just set the two variables.
+    - Postgres: one read-only branch in src/db/database.py, plus the driver in
+      requirements.txt.
+
+  The full plan, with the files to change and the verification runs, is in the
+  plan file.
+  ⎿  User rejected Claude's plan:
+     ╭─────────────────────────────────────────────────────────────────────────╮
+     │ Milestone 5: planner, multi-step, clarification (interrupt),            │
+     │ DB-agnostic config                                                      │
+     │                                                                         │
+     │ Context                                                                 │
+     │                                                                         │
+     │ Today the graph starts at generate_sql with steps=[question]. Problems  │
+     │ this milestone fixes:                                                   │
+     │ - "Delete all students who failed a course" ran a SELECT and answered   │
+     │   "Delete students with these IDs" — data was safe, but it should be    │
+     │   rejected before any SQL.                                              │
+     │ - Questions with dependent parts ("best teacher in Fall 2025, then who  │
+     │   failed their course") need steps that see earlier results.            │
+     │ - Vague questions ("who is the best teacher?") should pause and ask,    │
+     │   then resume.                                                          │
+     │ - src/main.py hard-codes the notes path and DB path; prompts say        │
+     │   "university database". The agent must work on any DB given a URL + a  │
+     │   notes file.                                                           │
+     │                                                                         │
+     │ Graph today (M4)                                                        │
+     │                                                                         │
+     │ START -> generate_sql -> validate_sql --ok--> execute_sql --ok-->       │
+     │ check_result --ok--> answer -> END                                      │
+     │               ^              |err                 |err                  │
+     │ |empty(1x)                                                              │
+     │               +--------------+--------------------+-------------------+ │
+     │               (attempts >= 3 on any error)  -> give_up -> END           │
+     │                                                                         │
+     │ Graph after M5                                                          │
+     │                                                                         │
+     │ START -> plan --answerable------------> generate_sql -> validate_sql -> │
+     │ execute_sql -> check_result                                             │
+     │           |  ^                              ^   (same error/retry loop  │
+     │ as today, max 3/step, -> give_up)                                       │
+     │           |  | (resume with reply)          |                           │
+     │                  |                                                      │
+     │           |  +--- ask_user <--needs_clarification (1st time)            │
+     │                 |                                                       │
+     │           |       [interrupt()]                                    more │
+     │ steps left ----+ (step_index+1)                                         │
+     │           |                                                             │
+     │ last step accepted -> answer -> END                                     │
+     │           +--out_of_scope / needs_clarification again--> decline -> END │
+     │   (no SQL run)                                                          │
+     │                                                                         │
+     │ Design                                                                  │
+     │                                                                         │
+     │ State (src/agent/state.py)                                              │
+     │                                                                         │
+     │ Add two keys (and update the state list in CLAUDE.md):                  │
+     │ - plan: dict | None — the planner's structured output {decision,        │
+     │   reason, steps, clarifying_question}; stored whole so it shows in the  │
+     │   trace.                                                                │
+     │ - clarification: str | None — the user's reply to the clarifying        │
+     │   question. question stays the original text (traceability).            │
+     │ - steps starts empty; plan fills it. step_index meaning becomes "the    │
+     │   step generate_sql works on"; check_result advances it on accept.      │
+     │ - status gains "rejected" and "needs_clarification".                    │
+     │                                                                         │
+     │ Planner (nodes.plan)                                                    │
+     │                                                                         │
+     │ - llm.with_structured_output(Plan) with a Pydantic model in             │
+     │   src/agent/planner.py (or state.py):                                   │
+     │   decision: Literal["answerable","needs_clarification","out_of_scope"], │
+     │   reason: str, steps: list[str], clarifying_question: str | None.       │
+     │ - Enforce limits in code, not only in the schema (OpenAI strict mode is │
+     │   unreliable on maxItems): steps[:3]; if answerable with no steps, use  │
+     │   [question].                                                           │
+     │ - Prompt (prompts.PLAN_PROMPT) gets schema + notes + question +         │
+     │   clarification (if any). Rules:                                        │
+     │   - out_of_scope: asks to change data (insert/update/delete/drop...),   │
+     │     or unrelated to this database's schema.                             │
+     │   - needs_clarification: only when the question is vague in itself (a   │
+     │     subjective word like "best" with no measure). NOT for duplicate     │
+     │     names or several matching records — those are answered by listing   │
+     │     all with ids.                                                       │
+     │   - steps: 1 step unless a later part needs an earlier result, or the   │
+     │     question has separate parts. Each step is self-contained, keeps the │
+     │     user's filters exactly (don't add or drop a semester etc., same     │
+     │     rule as [[retry-must-preserve-meaning]]), and later steps refer to  │
+     │     "the result of step N".                                             │
+     │   - If a clarification is already given, don't ask again.               │
+     │ - Returns {"plan": ..., "steps": ...}.                                  │
+     │                                                                         │
+     │ Clarification with interrupt (nodes.ask_user)                           │
+     │                                                                         │
+     │ - Separate node with no LLM call: reply =                               │
+     │   interrupt(state["plan"]["clarifying_question"]) → {"clarification":   │
+     │   reply} → edge back to plan.                                           │
+     │   Why separate: on resume LangGraph re-runs the interrupted node from   │
+     │   the top. If interrupt sat inside plan, the LLM would be called again  │
+     │   and might decide differently.                                         │
+     │ - Routing after_plan: answerable → generate_sql; needs_clarification    │
+     │   and no clarification yet → ask_user; otherwise (out_of_scope, or      │
+     │   still unclear after one reply) → decline.                             │
+     │ - decline node: answer = short message from prompts                     │
+     │   (OUT_OF_SCOPE_ANSWER with the reason, or the clarifying question),    │
+     │   status rejected / needs_clarification. No SQL.                        │
+     │ - Checkpointer: build_graph(..., checkpointer=None) compiles with       │
+     │   checkpointer or InMemorySaver() (ships with langgraph 1.2.22, no new  │
+     │   package). thread_id = run_id.                                         │
+     │                                                                         │
+     │ Complexity verdict: modest, not "much more complex". Cost is ~1 small   │
+     │ node, a checkpointer line, and a resume loop in run_traced (~15 lines). │
+     │ The one real trap (node re-execution on resume) is avoided by the       │
+     │ separate ask_user node. Recommend doing it.                             │
+     │                                                                         │
+     │ Multi-step loop                                                         │
+     │                                                                         │
+     │ - check_result on accept also returns step_index: state["step_index"] + │
+     │   1.                                                                    │
+     │ - after_check: error → retry_or_give_up; step_index < len(steps) →      │
+     │   generate_sql; else → answer.                                          │
+     │ - generate_sql adds a PREVIOUS_STEPS_SECTION when results is non-empty: │
+     │   for each accepted step, its text, SQL and format_rows_as_table        │
+     │   (already capped at 50 rows). The model copies the needed values (e.g. │
+     │   teacher id) as literals into the next query.                          │
+     │ - An empty earlier step is still accepted and the next step runs; the   │
+     │   answer explains it.                                                   │
+     │                                                                         │
+     │ Answer                                                                  │
+     │                                                                         │
+     │ - ANSWER_PROMPT takes all steps: per step "Step N: text / SQL / table", │
+     │   plus the clarification if one was given.                              │
+     │ - Skip the LLM (EMPTY_ANSWER) only when every step returned empty.      │
+     │                                                                         │
+     │ DB-agnostic config (src/config.py, outside src/agent)                   │
+     │                                                                         │
+     │ - DATABASE_URL default sqlite:///db/university.db, NOTES_PATH default   │
+     │   config/university_notes.md, read from env (.env via dotenv) with      │
+     │   defaults, resolved relative to the repo root. Add both to the setup   │
+     │   notes / .env example.                                                 │
+     │ - connect_readonly(url) in src/db/database.py takes a URL. SQLite: same │
+     │   mode=ro + PRAGMA query_only. Other dialects: raise a clear            │
+     │   "read-only connection not implemented for <dialect>" — we don't claim │
+     │   safety we haven't built (multiple DBs out of scope).                  │
+     │ - Remove university wording from src/agent: "questions about a          │
+     │   university database" → "questions about a database". Rename tracing   │
+     │   RUN_NAME to sql-qa-agent. University facts stay only in               │
+     │   config/university_notes.md.                                           │
+     │ - Dialect still from engine.dialect.name                                │
+     │   ([[db-agnostic-includes-dialect]]).                                   │
+     │                                                                         │
+     │ Tracing / CLI                                                           │
+     │                                                                         │
+     │ - run_traced(graph, state, *, model, ask_user): stream; if an           │
+     │   __interrupt__ update arrives, write an interrupt event (the           │
+     │   question), call ask_user(question), write a resume event (the reply), │
+     │   then stream Command(resume=reply) with the same thread_id, appending  │
+     │   to the same trace file. Each stream call gets its own LangSmith       │
+     │   run_id, with thread_id in metadata so LangSmith groups them.          │
+     │ - show_trace: print plan (decision, reason, numbered steps),            │
+     │   interrupt/resume, and step_index changes.                             │
+     │ - src/main.py: ask_user=lambda q: input(f"{q}\n> "); print the plan     │
+     │   decision, each step's SQL + row count, then the answer.               │
+     │                                                                         │
+     │ Tests (no fake-LLM agent tests this milestone)                          │
+     │                                                                         │
+     │ - Routing functions: after_plan (3 decisions + second clarification →   │
+     │   decline), after_check (next step vs answer).                          │
+     │ - run_traced with the existing FakeStreamingGraph emitting an           │
+     │   __interrupt__ chunk: asserts interrupt/resume events and that the     │
+     │   resume was streamed.                                                  │
+     │ - config defaults and env override.                                     │
+     │ - Existing tests keep passing (connect_readonly signature change in     │
+     │   test fixtures).                                                       │
+     │                                                                         │
+     │ Docs                                                                    │
+     │                                                                         │
+     │ - docs/planner-and-multistep.md: the three decisions, why ask_user is   │
+     │   its own node, the multi-step example below, "running on another       │
+     │   database". Re-run the delete question and keep its trace in           │
+     │   traces/examples/, plus one multi-step and one clarification trace.    │
+     │                                                                         │
+     │ Multi-step example flow                                                 │
+     │                                                                         │
+     │ "Which teacher had the highest average grade in Fall 2025, and which    │
+     │ students failed a course taught by that teacher"                        │
+     │ 1. plan → answerable, reason "two parts; part 2 needs the teacher from  │
+     │    part 1", steps:                                                      │
+     │    a. "Which teacher had the highest average grade (graded enrollments  │
+     │       only) in Fall 2025? Return teacher id, name, average."            │
+     │    b. "Which students failed a course taught by the teacher(s) from     │
+     │       step 1? Return student id, name, course, semester, grade."        │
+     │       (Step 2 is not limited to Fall 2025 — the question doesn't say    │
+     │       so. If two teachers tie, step 1 returns both and step 2 uses both │
+     │       ids.)                                                             │
+     │ 2. generate_sql (step 0) → validate → execute → check_result accepts,   │
+     │    results=[step0], step_index=1.                                       │
+     │ 3. generate_sql (step 1): prompt includes step 1's SQL and table, so it │
+     │    writes ... WHERE co.teacher_id = 7 AND e.grade < 60. → validate →    │
+     │    execute → check_result accepts, step_index=2.                        │
+     │ 4. step_index == len(steps) → answer sees both tables: "Dr. X (id 7)    │
+     │    had the highest average in Fall 2025 (84.5). Students who failed a   │
+     │    course taught by them: ..."                                          │
+     │    Each step has its own 3 attempts and one empty retry (counters reset │
+     │    on accept).                                                          │
+     │                                                                         │
+     │ Running on another database                                             │
+     │                                                                         │
+     │ - Another SQLite DB: set DATABASE_URL and NOTES_PATH (a notes file of   │
+     │   business rules for that DB). No code change — schema comes from the   │
+     │   inspector, dialect from the engine.                                   │
+     │ - Another engine (e.g. Postgres): add its driver to requirements.txt    │
+     │   and a read-only branch in connect_readonly (read-only DB user /       │
+     │   default_transaction_read_only). Only src/db/database.py changes;      │
+     │   validate_sql is dialect-neutral.                                      │
+     │                                                                         │
+     │ Files                                                                   │
+     │                                                                         │
+     │ - Modify: src/agent/{state,nodes,graph,prompts}.py, src/db/database.py, │
+     │   src/main.py, src/tracing.py, src/show_trace.py,                       │
+     │   tests/test_tracing.py, test fixtures using connect_readonly,          │
+     │   CLAUDE.md (state list), docs setup notes.                             │
+     │ - New: src/config.py, tests/test_graph_routing.py,                      │
+     │   tests/test_config.py, docs/planner-and-multistep.md.                  │
+     │                                                                         │
+     │ Verification                                                            │
+     │                                                                         │
+     │ - ./venv/bin/pytest all green.                                          │
+     │ - Real runs (python -m src.main ...), checking each trace with          │
+     │   show_trace:                                                           │
+     │   - "How many students are there?" → 1 step, same as before.            │
+     │   - "Delete all students who failed a course" → out_of_scope, no        │
+     │     generate_sql node in the trace.                                     │
+     │   - "What's the weather in Paris?" → out_of_scope.                      │
+     │   - "Who is the best teacher?" → CLI asks; reply "highest average grade │
+     │     in Fall 2025" → resumes and answers.                                │
+     │   - The multi-step example → 2 steps; step 2 SQL uses the id from       │
+     │     step 1.                                                             │
+     │   - A duplicate-name question → answered with both people (no           │
+     │     clarification).                                                     │
+     │ - DATABASE_URL=sqlite:///<copy of db> override works.                   │
+     │ - Export session to docs/agent-sessions/05-planner.txt (check for       │
+     │   keys).                                                                │
+     ╰─────────────────────────────────────────────────────────────────────────╯
+
+⏺ Updated plan
+  ⎿  /plan to preview
+
+  Ran 1 shell command, wrote 1 memory (ctrl+o to expand)
+
+⏺ The planner now makes plain model calls and parses the JSON reply into a Plan,
+  with a fallback to a one-step answerable plan when parsing fails. Milestone 6
+  adds unit tests for parse_plan and a scripted fake LLM, and I've saved a note
+  to keep later calls plain text. · summary
+
+⏺ User approved Claude's plan
+  ⎿  Plan saved to: 
+     ~/.claude/plans/pasted-content-id-c6f5-read-claude-md-temporal-globe.md · 
+     /plan to edit
+     Milestone 5: planner, multi-step, clarification (interrupt), DB-agnostic 
+     config
+
+     Context
+
+     Today the graph starts at generate_sql with steps=[question]. Problems this
+     milestone fixes:
+     - "Delete all students who failed a course" ran a SELECT and answered
+       "Delete students with these IDs" — data was safe, but it should be
+       rejected before any SQL.
+     - Questions with dependent parts ("best teacher in Fall 2025, then who
+       failed their course") need steps that see earlier results.
+     - Vague questions ("who is the best teacher?") should pause and ask, then
+       resume.
+     - src/main.py hard-codes the notes path and DB path; prompts say
+       "university database". The agent must work on any DB given a URL + a
+       notes file.
+
+     Graph today (M4)
+
+     START -> generate_sql -> validate_sql --ok--> execute_sql --ok--> 
+     check_result --ok--> answer -> END
+                   ^              |err                 |err                
+     |empty(1x)
+                   +--------------+--------------------+-------------------+
+                   (attempts >= 3 on any error)  -> give_up -> END
+
+     Graph after M5
+
+     START -> plan --answerable------------> generate_sql -> validate_sql -> 
+     execute_sql -> check_result
+               |  ^                              ^   (same error/retry loop as 
+     today, max 3/step, -> give_up)
+               |  | (resume with reply)          |                              
+                  |
+               |  +--- ask_user <--needs_clarification (1st time)               
+                 |
+               |       [interrupt()]                                    more 
+     steps left ----+ (step_index+1)
+               |                                                         last 
+     step accepted -> answer -> END
+               +--out_of_scope / needs_clarification again--> decline -> END   
+     (no SQL run)
+
+     Design
+
+     State (src/agent/state.py)
+
+     Add two keys (and update the state list in CLAUDE.md):
+     - plan: dict | None — the planner's structured output {decision, reason, 
+       steps, clarifying_question}; stored whole so it shows in the trace.
+     - clarification: str | None — the user's reply to the clarifying question.
+       question stays the original text (traceability).
+     - steps starts empty; plan fills it. step_index meaning becomes "the step
+       generate_sql works on"; check_result advances it on accept.
+     - status gains "rejected" and "needs_clarification".
+
+     Planner (nodes.plan)
+
+     - Structured output without with_structured_output. The LLM interface stays
+       llm.invoke(prompt).content -> str, like every other node, so the
+       milestone 6 fake LLM stays one simple class.
+       - PLAN_PROMPT asks for one JSON object {"decision", "reason", "steps", 
+         "clarifying_question"}.
+       - A Pydantic model Plan checks the reply: decision: 
+         Literal["answerable","needs_clarification","out_of_scope"], reason: 
+         str, steps: list[str] = [], clarifying_question: str | None = None.
+       - parse_plan(text, question) -> Plan is a pure function. It strips code
+         fences (same idea as extract_sql), then runs Plan.model_validate_json,
+         keeps steps[:3], and uses [question] if the plan is answerable but has
+         no steps.
+       - If the reply is not valid JSON or not a valid Plan, fall back to
+         answerable with steps [question] and reason "planner output could not 
+         be parsed: <error>". The fallback shows in the trace, and the question
+         still goes through the existing SQL path and its guards (validation,
+         read-only DB).
+       - parse_plan gets plain unit tests this milestone: valid JSON, fenced
+         JSON, more than 3 steps, garbage input.
+     - Fake LLM in milestone 6: one class that returns scripted strings in
+       order, e.g.
+       FakeLLM(['{"decision":"answerable","reason":"...","steps":["..."]}', 
+       "SELECT ...", "The answer..."]), with .invoke(prompt) returning an object
+       with .content and recording the prompt. To return a Plan, it just
+       returns that JSON string. No special support for structured output is
+       needed.
+     - Prompt (prompts.PLAN_PROMPT) gets schema + notes + question +
+       clarification (if any). Rules:
+       - out_of_scope: asks to change data (insert/update/delete/drop...), or
+         unrelated to this database's schema.
+       - needs_clarification: only when the question is vague in itself (a
+         subjective word like "best" with no measure). NOT for duplicate names
+         or several matching records — those are answered by listing all with
+         ids.
+       - steps: 1 step unless a later part needs an earlier result, or the
+         question has separate parts. Each step is self-contained, keeps the
+         user's filters exactly (don't add or drop a semester etc., same rule as
+         [[retry-must-preserve-meaning]]), and later steps refer to "the result
+         of step N".
+       - If a clarification is already given, don't ask again.
+     - Returns {"plan": ..., "steps": ...}.
+
+     Clarification with interrupt (nodes.ask_user)
+
+     - Separate node with no LLM call: reply = 
+       interrupt(state["plan"]["clarifying_question"]) → {"clarification": 
+       reply} → edge back to plan.
+       Why separate: on resume LangGraph re-runs the interrupted node from the
+       top. If interrupt sat inside plan, the LLM would be called again and
+       might decide differently.
+     - Routing after_plan: answerable → generate_sql; needs_clarification and no
+       clarification yet → ask_user; otherwise (out_of_scope, or still unclear
+       after one reply) → decline.
+     - decline node: answer = short message from prompts (OUT_OF_SCOPE_ANSWER
+       with the reason, or the clarifying question), status rejected /
+       needs_clarification. No SQL.
+     - Checkpointer: build_graph(..., checkpointer=None) compiles with
+       checkpointer or InMemorySaver() (ships with langgraph 1.2.22, no new
+       package). thread_id = run_id.
+
+     Complexity verdict: modest, not "much more complex". Cost is ~1 small node,
+     a checkpointer line, and a resume loop in run_traced (~15 lines). The one
+     real trap (node re-execution on resume) is avoided by the separate ask_user
+     node. Recommend doing it.
+
+     Multi-step loop
+
+     - check_result on accept also returns step_index: state["step_index"] + 1.
+     - after_check: error → retry_or_give_up; step_index < len(steps) →
+       generate_sql; else → answer.
+     - generate_sql adds a PREVIOUS_STEPS_SECTION when results is non-empty: for
+       each accepted step, its text, SQL and format_rows_as_table (already
+       capped at 50 rows). The model copies the needed values (e.g. teacher id)
+       as literals into the next query.
+     - An empty earlier step is still accepted and the next step runs; the
+       answer explains it.
+
+     Answer
+
+     - ANSWER_PROMPT takes all steps: per step "Step N: text / SQL / table",
+       plus the clarification if one was given.
+     - Skip the LLM (EMPTY_ANSWER) only when every step returned empty.
+
+     DB-agnostic config (src/config.py, outside src/agent)
+
+     - DATABASE_URL default sqlite:///db/university.db, NOTES_PATH default
+       config/university_notes.md, read from env (.env via dotenv) with
+       defaults, resolved relative to the repo root. Add both to the setup notes
+       / .env example.
+     - connect_readonly(url) in src/db/database.py takes a URL. SQLite: same
+       mode=ro + PRAGMA query_only. Other dialects: raise a clear "read-only
+       connection not implemented for <dialect>" — we don't claim safety we
+       haven't built (multiple DBs out of scope).
+     - Remove university wording from src/agent: "questions about a university
+       database" → "questions about a database". Rename tracing RUN_NAME to
+       sql-qa-agent. University facts stay only in config/university_notes.md.
+     - Dialect still from engine.dialect.name
+       ([[db-agnostic-includes-dialect]]).
+
+     Tracing / CLI
+
+     - run_traced(graph, state, *, model, ask_user): stream; if an __interrupt__
+       update arrives, write an interrupt event (the question), call
+       ask_user(question), write a resume event (the reply), then stream
+       Command(resume=reply) with the same thread_id, appending to the same
+       trace file. Each stream call gets its own LangSmith run_id, with
+       thread_id in metadata so LangSmith groups them.
+     - show_trace: print plan (decision, reason, numbered steps),
+       interrupt/resume, and step_index changes.
+     - src/main.py: ask_user=lambda q: input(f"{q}\n> "); print the plan
+       decision, each step's SQL + row count, then the answer.
+
+     Tests (no fake-LLM agent tests this milestone)
+
+     - Routing functions: after_plan (3 decisions + second clarification →
+       decline), after_check (next step vs answer).
+     - run_traced with the existing FakeStreamingGraph emitting an __interrupt__
+       chunk: asserts interrupt/resume events and that the resume was streamed.
+     - config defaults and env override.
+     - Existing tests keep passing (connect_readonly signature change in test
+       fixtures).
+
+     Docs
+
+     - docs/planner-and-multistep.md: the three decisions, why ask_user is its
+       own node, the multi-step example below, "running on another database".
+       Re-run the delete question and keep its trace in traces/examples/, plus
+       one multi-step and one clarification trace.
+
+     Multi-step example flow
+
+     "Which teacher had the highest average grade in Fall 2025, and which
+     students failed a course taught by that teacher"
+     1. plan → answerable, reason "two parts; part 2 needs the teacher from part
+        1", steps:
+        a. "Which teacher had the highest average grade (graded enrollments
+           only) in Fall 2025? Return teacher id, name, average."
+        b. "Which students failed a course taught by the teacher(s) from step 1?
+           Return student id, name, course, semester, grade."
+           (Step 2 is not limited to Fall 2025 — the question doesn't say so. If
+           two teachers tie, step 1 returns both and step 2 uses both ids.)
+     2. generate_sql (step 0) → validate → execute → check_result accepts,
+        results=[step0], step_index=1.
+     3. generate_sql (step 1): prompt includes step 1's SQL and table, so it
+        writes ... WHERE co.teacher_id = 7 AND e.grade < 60. → validate →
+        execute → check_result accepts, step_index=2.
+     4. step_index == len(steps) → answer sees both tables: "Dr. X (id 7) had
+        the highest average in Fall 2025 (84.5). Students who failed a course
+        taught by them: ..."
+        Each step has its own 3 attempts and one empty retry (counters reset on
+        accept).
+
+     Running on another database
+
+     - Another SQLite DB: set DATABASE_URL and NOTES_PATH (a notes file of
+       business rules for that DB). No code change — schema comes from the
+       inspector, dialect from the engine.
+     - Another engine (e.g. Postgres): add its driver to requirements.txt and a
+       read-only branch in connect_readonly (read-only DB user /
+       default_transaction_read_only). Only src/db/database.py changes;
+       validate_sql is dialect-neutral.
+
+     Files
+
+     - Modify: src/agent/{state,nodes,graph,prompts}.py, src/db/database.py,
+       src/main.py, src/tracing.py, src/show_trace.py, tests/test_tracing.py,
+       test fixtures using connect_readonly, CLAUDE.md (state list), docs setup
+       notes.
+     - New: src/config.py, tests/test_graph_routing.py, tests/test_config.py,
+       docs/planner-and-multistep.md.
+
+     Verification
+
+     - ./venv/bin/pytest all green.
+     - Real runs (python -m src.main ...), checking each trace with show_trace:
+       - "How many students are there?" → 1 step, same as before.
+       - "Delete all students who failed a course" → out_of_scope, no
+         generate_sql node in the trace.
+       - "What's the weather in Paris?" → out_of_scope.
+       - "Who is the best teacher?" → CLI asks; reply "highest average grade in
+         Fall 2025" → resumes and answers.
+       - The multi-step example → 2 steps; step 2 SQL uses the id from step 1.
+       - A duplicate-name question → answered with both people (no
+         clarification).
+     - DATABASE_URL=sqlite:///<copy of db> override works.
+     - Export session to docs/agent-sessions/05-planner.txt (check for keys).
+
+⏺ The plan is approved, so I'm starting the code: state and prompts first, then
+  nodes, graph, config, tracing and tests.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Write(src/agent/state.py)
+  ⎿  Added 9 lines, removed 5 lines
+       4  
+       5  
+       6  class AgentState(TypedDict):
+       7 -    question: str                                              
+       8 -    steps: list[str]          # sub-questions; for now just [qu
+         -estion], the planner fills it later                            
+       9 -    step_index: int           # which step generate_sql is work
+         -ing on                                                         
+       7 +    question: str             # the user's original question, n
+         +ever rewritten                                                 
+       8 +    clarification: str | None # the user's reply to the planner
+         +'s clarifying question                                         
+       9 +    plan: dict | None         # planner output: {decision, reas
+         +on, steps, clarifying_question}                                
+      10 +    steps: list[str]          # sub-questions from the planner 
+         +(1-3)                                                          
+      11 +    step_index: int           # the step generate_sql works on;
+         + check_result moves it on                                      
+      12      sql: str                  # the latest generated (then vali
+          dated) query
+      13      error: str | None         # latest failure message, fed bac
+          k to generate_sql; None when fine
+      14      attempts: int             # generate_sql calls for the curr
+          ent step, reset when the step succeeds
+     ...
+      18      # Only check_result appends, so this holds accepted results
+           only.
+      19      results: Annotated[list[dict], operator.add]   # {"step_ind
+          ex", "step", "sql", "columns", "rows"}
+      20      answer: str
+      19 -    status: str               # "running" | "done" | "error"   
+      21 +    status: str               # "running" | "done" | "error" | 
+         +"rejected" | "needs_clarification"                             
+      22  
+      23  
+      24  def initial_state(question: str) -> AgentState:
+      25      return AgentState(
+      26          question=question,
+      25 -        steps=[question],                                      
+      27 +        clarification=None,                                    
+      28 +        plan=None,                                             
+      29 +        steps=[],                                              
+      30          step_index=0,
+      31          sql="",
+      32          error=None,
+
+⏺ Write(src/agent/planner.py)
+  ⎿  Wrote 46 lines to src/agent/planner.py
+       1 """The planner's output format and how we read it from the model
+         's plain-text reply.
+       2 
+       3 The model is asked for JSON (see prompts.PLAN_PROMPT) and we val
+         idate it here, instead of
+       4 using with_structured_output: every node then talks to the LLM t
+         he same way
+       5 (llm.invoke(prompt).content), and a fake LLM in tests only has t
+         o return strings.
+       6 """
+     … +40 lines (ctrl+o to expand)
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Next, the prompts: the plan prompt, previous steps in the SQL prompt, an
+  answer prompt that covers all steps, and messages for declined questions.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Now the nodes: plan, ask_user, decline, plus multi-step support in
+  generate_sql, check_result and answer.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Now the graph wiring and routing.
+
+⏺ Write(src/agent/graph.py)
+  ⎿  Added 31 lines, removed 7 lines
+       1  """Wire the nodes into a LangGraph graph.
+       2  
+       3 -generate_sql -> validate_sql -> execute_sql -> check_result -> 
+         -answer                                                         
+       4 -Any failure loops back to generate_sql with the error, until MA
+         -X_ATTEMPTS, then give_up.                                      
+       3 +plan -> generate_sql -> validate_sql -> execute_sql -> check_re
+         +sult -> (next step | answer)                                   
+       4 +- plan can also end early (decline) or pause to ask the user (a
+         +sk_user, then plan again).                                     
+       5 +- Any SQL failure loops back to generate_sql with the error, un
+         +til MAX_ATTEMPTS, then give_up.                                
+       6  """
+       7  from functools import partial
+       8  
+       9 +from langgraph.checkpoint.memory import InMemorySaver          
+      10  from langgraph.graph import END, START, StateGraph
+      11  from sqlalchemy import Engine
+      12  
+     ...
+      18  
+      19  # --- Routing: each returns the name of the next node ---------
+          ------------------
+      20  
+      21 +def after_plan(state: AgentState) -> str:                      
+      22 +    decision = state["plan"]["decision"]                       
+      23 +    if decision == "answerable":                               
+      24 +        return "generate_sql"                                  
+      25 +    if decision == "needs_clarification" and not state["clarifi
+         +cation"]:                                                      
+      26 +        return "ask_user"                                      
+      27 +    return "decline"  # out of scope, or still unclear after on
+         +e clarification                                                
+      28 +                                                               
+      29 +                                                               
+      30  def retry_or_give_up(state: AgentState) -> str:
+      31      return "generate_sql" if state["attempts"] < MAX_ATTEMPTS e
+          lse "give_up"
+      32  
+     ...
+      40  
+      41  
+      42  def after_check(state: AgentState) -> str:
+      32 -    return retry_or_give_up(state) if state["error"] else "answ
+         -er"                                                            
+      43 +    if state["error"]:                                         
+      44 +        return retry_or_give_up(state)                         
+      45 +    # check_result already moved step_index on to the next step
+         +.                                                              
+      46 +    return "generate_sql" if state["step_index"] < len(state["s
+         +teps"]) else "answer"                                          
+      47  
+      48  
+      49  # --- Graph ---------------------------------------------------
+          ------------------
+      50  
+      37 -def build_graph(llm, engine: Engine, notes: str):              
+      38 -    """Dependencies are bound here, so tests can pass a fake LL
+         -M and a test database."""                                      
+      51 +def build_graph(llm, engine: Engine, notes: str, checkpointer=N
+         +one):                                                          
+      52 +    """Dependencies are bound here, so tests can pass a fake LL
+         +M and a test database.                                         
+      53 +                                                               
+      54 +    The checkpointer saves the state between steps; interrupt()
+         + in ask_user needs it to                                       
+      55 +    pause the run and resume it later with the user's reply.   
+      56 +    """                                                        
+      57      schema = schema_as_text(engine)  # read once, not on every 
+          question
+      58  
+      59      graph = StateGraph(AgentState)
+      60 +    graph.add_node("plan", partial(nodes.plan, llm=llm, schema=
+         +schema, notes=notes))                                          
+      61 +    graph.add_node("ask_user", nodes.ask_user)                 
+      62 +    graph.add_node("decline", nodes.decline)                   
+      63      graph.add_node("generate_sql", partial(
+      64          nodes.generate_sql, llm=llm, schema=schema, notes=notes
+          , dialect=engine.dialect.name,
+      65      ))
+     ...
+      69      graph.add_node("answer", partial(nodes.answer, llm=llm, not
+          es=notes))
+      70      graph.add_node("give_up", nodes.give_up)
+      71  
+      51 -    graph.add_edge(START, "generate_sql")                      
+      72 +    graph.add_edge(START, "plan")                              
+      73 +    graph.add_conditional_edges("plan", after_plan, ["generate_
+         +sql", "ask_user", "decline"])                                  
+      74 +    graph.add_edge("ask_user", "plan")                         
+      75      graph.add_edge("generate_sql", "validate_sql")
+      76      graph.add_conditional_edges(
+      77          "validate_sql", after_validate, ["execute_sql", "genera
+          te_sql", "give_up"])
+     ...
+      81          "check_result", after_check, ["answer", "generate_sql",
+           "give_up"])
+      82      graph.add_edge("answer", END)
+      83      graph.add_edge("give_up", END)
+      61 -    return graph.compile()                                     
+      84 +    graph.add_edge("decline", END)                             
+      85 +    return graph.compile(checkpointer=checkpointer or InMemoryS
+         +aver())                                                        
+
+⏺ Now the config file and the URL-based read-only connection.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Next, the tracing resume loop. When the graph pauses at ask_user, run_traced
+  asks the user, records it, and resumes on the same thread.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ Now show_trace and the CLI.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The one failure is expected: the metadata now includes thread_id. I'll update
+  that test and add the new ones.
+
+  Ran 1 shell command (ctrl+o to expand)
+⏺ All 84 tests pass. Before spending API calls, I'll check a real compiled graph
+  with a throwaway scripted LLM in the scratchpad. That confirms that interrupt
+  and resume work through run_traced.
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ The pause/resume path works end to end: one trace with the interrupt and
+  resume in the middle, and step 2 gets step 1's results. Now the real runs with
+  the OpenAI model.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Simple question, delete and weather all behave as planned. Next: the
+  multi-step example, the clarification flow, and a duplicate-name question.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The answer looks plausible, but the trace shows two problems. Let me look at
+  what the planner decided.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The planner's reply failed to parse, so the fallback treated the whole
+  question as one step. I'm reproducing it now to see what the model actually
+  sent. · summary
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ The trace showed a real bug: the model sends null for steps on clarifying
+  questions, which the Plan model rejects, so a non-answer got treated as
+  answerable. I'm accepting null steps, adding ties to the don't-ask rule,
+  logging the start of the raw reply on parse failures, and switching the answer
+  prompt to use names instead of he/she. · summary
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The parsing is fixed, but the model still asks about ties. I'll make the rule
+  explicit: a measurable superlative is answerable, and ties are returned in
+  full.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ There are two steps now, but step 2 applies "in Fall 2025" to the whole
+  question when it should only cover the teacher part. I'll try a rule where
+  each filter applies only to the part of the question it's written in. 
+  · summary
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The model still reads step 2 as Fall 2025 either way, so the question is
+  genuinely ambiguous; I'll drop that prompt rule and check whether the reading
+  changes the answer on this data. · summary
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Two students failed one of Priya Shah's courses with step 2 (Lucas Silva in
+  Spring 2025, Ethan Miller in Spring 2026), but none did when limited to Fall
+  2025. I'm fixing the line wrap left by the revert, then running the full
+  flows. · summary
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The multi-step flow checks out: step 1 handles ties with = MAX(...) and step 2
+  passes along teacher_id = 3. Next I'll test the clarification flow with the
+  reply piped in, plus a duplicate-name question. · summary
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The clarification path finished with the correct teacher, but the answer
+  quotes 89.0 while the SQL selects only id and name. I'm checking the trace to
+  confirm that number came from a real result. · summary
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The 89.0 checks out from the two steps, and the pause, resume and second plan
+  all appear in one trace. The planner over-split, since picking the top teacher
+  could have stayed in one step. Next I'll run the duplicate-name check, which
+  didn't execute earlier because of a shell typo. · summary
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ No clarification was asked, which is correct. But this answer merges the two
+  students ("id 1 or 2") into one list. Let me check whether the step 2 SQL
+  dropped the student id.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The planner told step 2 to return only offering, course and semester ids, with
+  no student id, so the two Marias couldn't be told apart and the answer showed
+  ids instead of course names. I'm tightening the rule about ids next. 
+  · summary
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The two Marias are now separated by course names, and the counts match the
+  merged list (6 + 6 graded). The second run is still going, so I'm writing the
+  docs and saving the example traces meanwhile. · summary
+
+  Searched for 1 pattern, ran 2 shell commands (ctrl+o to expand)
+
+⏺ Now the design doc, including the bug found through the trace.
+
+⏺ Write(docs/planner-and-multistep.md)
+  ⎿  Wrote 122 lines to docs/planner-and-multistep.md
+       1 # Planner, multi-step questions, clarification and running on an
+         other database
+       2 
+       3 ## The graph
+       4 
+       5 ```
+       6 START -> plan --answerable--> generate_sql -> validate_sql -> ex
+         ecute_sql -> check_result
+       7           |  ^                    ^     (error loop: max 3 attem
+         pts per step, then give_up)   |
+     … +115 lines (ctrl+o to expand)
+
+  Ran 2 shell commands (ctrl+o to expand)
+
+⏺ The first duplicate-name run finished. The second is still running, so I'll
+  check whether it's stuck.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ The second run stalled, exposing two bugs: the planner asked "Which Maria
+  Garcia do you mean?" despite the duplicate-name rule, and the CLI then blocked
+  on input() with no terminal, where an empty reply could loop the same
+  question. I'm stopping the run to fix both. · summary
+⏺ Stop Task
+  ⎿  python3 - <<'EOF'
+     p='src/agent/prompts.py'… · stopped
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Tests pass (85). I'll rerun the duplicate-name question 3 times with stdin
+  closed, so a clarification can't hang it again.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ All 3 answers came back for both students with no clarifying question asked.
+  Since the prompt changed, I'll rerun the other flows once as a regression
+  check, including an empty reply to the clarifying question. · summary
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Every flow behaves as planned. The exit code 1 came from a stray usage call in
+  my test loop, not from the agent. I'll add the two later findings to the doc,
+  then do a final test run and git status.
+
+  Ran 1 shell command (ctrl+o to expand)
+
+⏺ Milestone 5 works: all 85 tests pass, and every flow behaved as planned in
+  real runs with gpt-4.1-mini. Nothing is committed.
+
+  What changed
+  - Planner: the model returns JSON as plain text, and a Pydantic Plan in
+    src/agent/planner.py checks it. No with_structured_output, so the milestone
+    6 fake LLM can just return strings. If the reply can't be parsed, the
+    question runs as one step, and the trace shows the reason and the start of
+    the raw reply.
+  - New nodes:
+    - ask_user calls interrupt() and has no LLM call, so re-running it on resume
+      is harmless.
+    - decline ends out-of-scope questions with a short message and runs no SQL.
+    - It asks at most once; if the question is still unclear after the reply,
+      the run ends.
+  - Multi-step: check_result moves to the next step when it accepts one. Later
+    steps get the earlier steps' SQL and result tables, and answer uses all
+    steps.
+  - Tracing: pauses and replies are written into the same trace file, on the
+    same LangSmith thread.
+  - DB-agnostic: src/config.py reads DATABASE_URL and NOTES_PATH, with defaults.
+    connect_readonly now takes a URL and refuses anything that isn't SQLite.
+    The "university" wording is gone from src/agent.
+
+  Real runs
+
+  ┌──────────────────────────┬──────────────────────────────────────────────┐
+  │         Question         │                    Result                    │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ How many students?       │ 1 step, 30                                   │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ Delete all students who  │ rejected, no SQL                             │
+  │ failed a course          │                                              │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ Weather in Paris         │ rejected                                     │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ Who is the best teacher? │ asks for a measure, then answers with your   │
+  │                          │ reply; an empty reply ends the run           │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ Your multi-step example  │ 2 steps; step 2's SQL uses teacher_id = 3    │
+  │                          │ from step 1                                  │
+  ├──────────────────────────┼──────────────────────────────────────────────┤
+  │ Maria Garcia's grades    │ both students listed separately by id, 3 of  │
+  │                          │ 3 runs                                       │
+  └──────────────────────────┴──────────────────────────────────────────────┘
+
+  Bugs found through traces, now fixed
+  1. Planner reply never parsed: the model sent "steps": null, so the fallback
+     ran the whole question as one query. That query limited the failures to
+     Fall 2025 and used LIMIT 1, which drops ties. The same fix stops the
+     planner asking about ties. This is the trace-found bug the homework asks
+     for, written up in docs/planner-and-multistep.md, with the trace saved as
+     traces/examples/bug-planner-null-steps.jsonl.
+  2. Asking about a shared name: in one run the planner asked "Which Maria
+     Garcia do you mean?" despite the rule. I made the rule stronger.
+  3. Clarification loop: an empty reply counted as "not asked yet", which could
+     repeat the question forever, and the CLI hung with no terminal attached.
+
+  Your call: in your multi-step example, the model always reads "failed a course
+  taught by that teacher" as Fall 2025 only, and the answer depends on that.
+  With Fall 2025 only, nobody failed. In any semester, two students failed one
+  of Priya Shah's courses (Lucas Silva, Spring 2025; Ethan Miller, Spring 2026).
+  I stopped adjusting the prompt for this. Tell me which reading is right and
+  I'll make it the reference answer in the milestone 6 eval set.
+
+  I also added .env.example, five curated traces in traces/examples/, and the
+  new state keys in CLAUDE.md. Next is exporting this session to
+  docs/agent-sessions/05-planner.txt (check it for keys first). I can commit
+  after that if you want.
+
+✻ Cooked for 14m 53s · done 3:07 AM

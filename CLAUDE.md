@@ -35,8 +35,11 @@ plan -> generate_sql -> validate_sql -> execute_sql -> check_result -> answer
 - answer: write the answer only from the actual query results
 
 ## State (TypedDict)
-question, steps, step_index, sql, error, attempts, empty_retry_used, last_result, results,
-answer, status
+question, clarification, plan, steps, step_index, sql, error, attempts, empty_retry_used,
+last_result, results, answer, status
+- plan: the planner's output {decision, reason, steps, clarifying_question}, kept whole for the trace
+- clarification: the user's reply to the clarifying question (question itself is never rewritten)
+- step_index: the step generate_sql works on; check_result moves it on when it accepts a step
 - empty_retry_used: the one empty-result retry was used in the current step
 - last_result: rows from execute_sql waiting for check_result; only check_result appends to
   results, so results holds accepted results only

@@ -2,6 +2,9 @@
 import json
 import uuid
 
+import pytest
+from langgraph.types import Command, Interrupt
+
 from src.show_trace import format_trace, load_trace
 from src.tracing import MAX_TRACE_ROWS, TraceWriter, compact, run_traced
 
@@ -70,7 +73,57 @@ def test_run_traced_writes_each_update_and_returns_the_final_state(tmp_path):
     assert nodes == ["generate_sql", "answer"]
     # LangSmith gets the same id as the file, plus a name, tags and metadata.
     assert str(graph.config["run_id"]) == run_id
-    assert graph.config["metadata"] == {"question": "Q", "run_id": run_id, "model": "m"}
+    assert graph.config["metadata"] == {"question": "Q", "run_id": run_id, "model": "m",
+                                        "thread_id": run_id}
+    # The checkpointer keys the saved state by thread_id.
+    assert graph.config["configurable"] == {"thread_id": run_id}
+
+
+class FakePausingGraph:
+    """First call pauses with an interrupt, the second (the resume) finishes."""
+
+    def __init__(self):
+        self.calls = []  # (input, config) per stream call
+
+    def stream(self, graph_input, config, stream_mode):
+        self.calls.append((graph_input, config))
+        if len(self.calls) == 1:
+            yield ("updates", {"plan": {"plan": {"decision": "needs_clarification"}}})
+            yield ("updates", {"__interrupt__": (Interrupt(value="Best by what measure?"),)})
+        else:
+            yield ("updates", {"ask_user": {"clarification": "highest average grade"}})
+            yield ("updates", {"answer": {"answer": "A", "status": "done"}})
+            yield ("values", {"question": "Q", "status": "done", "answer": "A"})
+
+
+def test_run_traced_asks_the_user_and_resumes_on_the_same_thread(tmp_path):
+    graph = FakePausingGraph()
+    asked = []
+
+    def ask_user(question):
+        asked.append(question)
+        return "highest average grade"
+
+    state, run_id, path = run_traced(graph, {"question": "Q"}, model="m",
+                                     ask_user=ask_user, trace_dir=tmp_path)
+
+    assert asked == ["Best by what measure?"]
+    assert state["answer"] == "A"
+    resume_input, resume_config = graph.calls[1]
+    assert isinstance(resume_input, Command) and resume_input.resume == "highest average grade"
+    assert resume_config["configurable"] == {"thread_id": run_id}
+    assert str(resume_config["run_id"]) != run_id  # a new LangSmith run in the same thread
+
+    records = load_trace(path)
+    assert [r["event"] for r in records] == [
+        "start", "node", "interrupt", "resume", "node", "node", "end"]
+    assert records[2]["question"] == "Best by what measure?"
+    assert records[3]["reply"] == "highest average grade"
+
+
+def test_run_traced_without_ask_user_fails_clearly_on_an_interrupt(tmp_path):
+    with pytest.raises(RuntimeError, match="no ask_user"):
+        run_traced(FakePausingGraph(), {"question": "Q"}, model="m", trace_dir=tmp_path)
 
 
 def test_format_trace_shows_sql_error_and_answer(tmp_path):
@@ -83,6 +136,24 @@ def test_format_trace_shows_sql_error_and_answer(tmp_path):
     assert "[1] execute_sql" in text
     assert "ERROR: Database error: no such column: x" in text
     assert "status=error" in text and "Sorry." in text
+
+
+def test_format_trace_shows_plan_and_clarification(tmp_path):
+    writer = TraceWriter(str(uuid.uuid4()), tmp_path)
+    writer.start("Who is the best teacher?", "m")
+    writer.node("plan", {"plan": {"decision": "needs_clarification", "reason": "best is vague",
+                                  "steps": [], "clarifying_question": "Best by what?"}}, 1.0)
+    writer.interrupt("Best by what?")
+    writer.resume("highest average grade")
+    writer.node("plan", {"plan": {"decision": "answerable", "reason": "clear now",
+                                  "steps": ["Teacher with the highest average grade"],
+                                  "clarifying_question": None}}, 1.0)
+
+    text = format_trace(load_trace(writer.path))
+    assert "decision=needs_clarification" in text
+    assert "paused, asked the user: Best by what?" in text
+    assert "user replied: highest average grade" in text
+    assert "step 1: Teacher with the highest average grade" in text
 
 
 def test_trace_lines_are_valid_json_even_with_non_json_values(tmp_path):

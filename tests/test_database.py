@@ -15,14 +15,14 @@ def db_path(tmp_path_factory):
 
 @pytest.fixture(scope="module")
 def engine(db_path):
-    engine = connect_readonly(db_path)
+    engine = connect_readonly(f"sqlite:///{db_path}")
     yield engine
     engine.dispose()
 
 
 def test_missing_file_fails_fast(tmp_path):
     with pytest.raises(FileNotFoundError):
-        connect_readonly(tmp_path / "nope.db")
+        connect_readonly(f"sqlite:///{tmp_path / 'nope.db'}")
 
 
 def test_writes_are_rejected(engine):

@@ -1,10 +1,12 @@
 """Graph nodes. Each takes the state (plus bound dependencies) and returns only the keys it changes."""
-import re
 import textwrap
 
+from langgraph.types import interrupt
 from sqlalchemy import Engine
 
 from src.agent import prompts
+from src.agent.llm import strip_code_fences
+from src.agent.planner import parse_plan
 from src.agent.sql_validation import validate_sql as check_sql_rules
 from src.agent.state import AgentState
 from src.db.database import run_query
@@ -12,7 +14,43 @@ from src.db.database import run_query
 MAX_ATTEMPTS = 3  # generate_sql calls per step before give_up
 
 
+def plan(state: AgentState, *, llm, schema: str, notes: str) -> dict:
+    clarification = state["clarification"]
+    prompt = prompts.PLAN_PROMPT.format(
+        schema=schema,
+        notes=notes,
+        question=state["question"],
+        clarification=(prompts.CLARIFICATION_SECTION.format(clarification=clarification)
+                       if clarification else ""),
+        clarification_rule=(prompts.CLARIFICATION_GIVEN_RULE
+                            if clarification is not None else ""),
+    )
+    result = parse_plan(llm.invoke(prompt).content, state["question"])
+    return {"plan": result.model_dump(), "steps": result.steps}
+
+
+def ask_user(state: AgentState) -> dict:
+    # No LLM call here on purpose: on resume LangGraph re-runs this node from the top,
+    # and interrupt() then returns the user's reply instead of pausing again.
+    reply = interrupt(state["plan"]["clarifying_question"] or state["plan"]["reason"])
+    return {"clarification": str(reply).strip()}
+
+
+def decline(state: AgentState) -> dict:
+    """End without running SQL: out of scope, or still unclear after one clarification."""
+    reason = state["plan"]["reason"]
+    if state["plan"]["decision"] == "out_of_scope":
+        return {"answer": prompts.OUT_OF_SCOPE_ANSWER.format(reason=reason), "status": "rejected"}
+    return {"answer": prompts.STILL_UNCLEAR_ANSWER.format(reason=reason),
+            "status": "needs_clarification"}
+
+
 def generate_sql(state: AgentState, *, llm, schema: str, notes: str, dialect: str) -> dict:
+    previous = ""
+    if state["results"]:  # later steps see what earlier steps found
+        previous = prompts.PREVIOUS_STEPS_SECTION.format(
+            steps=prompts.format_step_results(state["results"]))
+
     retry = ""
     if state["error"]:  # the previous attempt failed: show the model its SQL and the error
         retry = prompts.RETRY_SECTION.format(sql=state["sql"], error=state["error"])
@@ -21,11 +59,12 @@ def generate_sql(state: AgentState, *, llm, schema: str, notes: str, dialect: st
         dialect=dialect,
         schema=schema,
         notes=notes,
+        previous_steps=previous,
         question=state["steps"][state["step_index"]],
         retry=retry,
     )
     reply = llm.invoke(prompt)
-    return {"sql": extract_sql(reply.content), "attempts": state["attempts"] + 1}
+    return {"sql": strip_code_fences(reply.content), "attempts": state["attempts"] + 1}
 
 
 def validate_sql(state: AgentState) -> dict:
@@ -61,6 +100,7 @@ def check_result(state: AgentState) -> dict:
     }
     return {
         "results": [entry],
+        "step_index": state["step_index"] + 1,
         "last_result": None,
         "error": None,
         "attempts": 0,
@@ -69,15 +109,17 @@ def check_result(state: AgentState) -> dict:
 
 
 def answer(state: AgentState, *, llm, notes: str) -> dict:
-    last = state["results"][-1]
-    if is_empty_result(last["rows"]):  # nothing to ground an answer in, so skip the LLM
+    results = state["results"]
+    if all(is_empty_result(r["rows"]) for r in results):  # nothing to ground an answer in
         return {"answer": prompts.EMPTY_ANSWER, "status": "done"}
 
+    clarification = state["clarification"]
     prompt = prompts.ANSWER_PROMPT.format(
         notes=notes,
         question=state["question"],
-        sql=last["sql"],
-        table=prompts.format_rows_as_table(last["columns"], last["rows"]),
+        clarification=(prompts.CLARIFICATION_SECTION.format(clarification=clarification)
+                       if clarification else ""),
+        steps=prompts.format_step_results(results),
     )
     reply = llm.invoke(prompt)
     return {"answer": reply.content.strip(), "status": "done"}
@@ -98,8 +140,3 @@ def is_empty_result(rows: list[tuple]) -> bool:
         return True
     return len(rows) == 1 and all(value is None for value in rows[0])
 
-
-def extract_sql(text: str) -> str:
-    """Strip markdown code fences the model sometimes wraps around the query."""
-    match = re.search(r"```(?:\w+)?\s*(.*?)```", text, re.DOTALL)
-    return (match.group(1) if match else text).strip()

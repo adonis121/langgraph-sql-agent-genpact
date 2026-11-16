@@ -4,9 +4,11 @@ from typing import Annotated, TypedDict
 
 
 class AgentState(TypedDict):
-    question: str
-    steps: list[str]          # sub-questions; for now just [question], the planner fills it later
-    step_index: int           # which step generate_sql is working on
+    question: str             # the user's original question, never rewritten
+    clarification: str | None # the user's reply to the planner's clarifying question
+    plan: dict | None         # planner output: {decision, reason, steps, clarifying_question}
+    steps: list[str]          # sub-questions from the planner (1-3)
+    step_index: int           # the step generate_sql works on; check_result moves it on
     sql: str                  # the latest generated (then validated) query
     error: str | None         # latest failure message, fed back to generate_sql; None when fine
     attempts: int             # generate_sql calls for the current step, reset when the step succeeds
@@ -16,13 +18,15 @@ class AgentState(TypedDict):
     # Only check_result appends, so this holds accepted results only.
     results: Annotated[list[dict], operator.add]   # {"step_index", "step", "sql", "columns", "rows"}
     answer: str
-    status: str               # "running" | "done" | "error"
+    status: str               # "running" | "done" | "error" | "rejected" | "needs_clarification"
 
 
 def initial_state(question: str) -> AgentState:
     return AgentState(
         question=question,
-        steps=[question],
+        clarification=None,
+        plan=None,
+        steps=[],
         step_index=0,
         sql="",
         error=None,

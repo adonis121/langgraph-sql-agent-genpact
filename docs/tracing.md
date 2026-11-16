@@ -3,7 +3,7 @@
 Every run is traced in two places, both keyed by the same `run_id`:
 
 1. **LangSmith** (when `LANGSMITH_TRACING` / `LANGSMITH_API_KEY` are set in `.env`).
-   Runs are named `university-qa`, tagged `sql-agent`, with metadata `question`, `run_id`, `model`.
+   Runs are named `sql-qa-agent`, tagged `sql-agent`, with metadata `question`, `run_id`, `model`, `thread_id`. A run that pauses for a clarification is two LangSmith runs (before and after the reply) with the same `thread_id`; the local file holds both, with `interrupt` and `resume` events between them.
    The LangSmith run id *is* the local file name, so the two are easy to match.
    Without LangSmith config everything still works; only the local file is written.
 2. **Local file** `traces/<run_id>.jsonl`, always written. This is what is kept in the repo.

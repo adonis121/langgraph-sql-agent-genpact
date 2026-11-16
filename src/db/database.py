@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy import Engine, create_engine, event, inspect, text
+from sqlalchemy.engine import make_url
 
 
 @dataclass
@@ -14,9 +15,23 @@ class QueryResult:
     rows: list[tuple]
 
 
-def connect_readonly(db_path: Path) -> Engine:
-    """Open a SQLite file read-only: mode=ro at the file level, plus PRAGMA query_only."""
-    db_path = Path(db_path).resolve()
+def connect_readonly(database_url: str) -> Engine:
+    """Open the database read-only. Only SQLite is supported so far.
+
+    Another engine needs its own read-only setup here (e.g. a read-only database user);
+    we refuse it rather than open a connection that could write.
+    """
+    url = make_url(database_url)
+    if url.get_backend_name() != "sqlite":
+        raise NotImplementedError(
+            f"Read-only connection is not implemented for '{url.get_backend_name()}'. "
+            "Add it in src/db/database.py (e.g. with a read-only database user).")
+    return _connect_sqlite_readonly(Path(url.database))
+
+
+def _connect_sqlite_readonly(db_path: Path) -> Engine:
+    """mode=ro at the file level, plus PRAGMA query_only on every connection."""
+    db_path = db_path.resolve()
     if not db_path.exists():
         raise FileNotFoundError(f"{db_path} not found. Build it with: python -m src.db.build_db")
 
